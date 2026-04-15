@@ -2,7 +2,24 @@
 import { useState } from 'react';
 
 export default function ExecutionCard({ execution, onUpdate }: { execution: any, onUpdate: () => void }) {
-  const [mappedStore, setMappedStore] = useState('');
+  // Pre-fill the input with the extracted name from Slack
+const [mappedStore, setMappedStore] = useState(execution.extracted_store || '');
+const handleAction = async (newStatus: 'approved' | 'rejected') => {
+    const { error } = await supabase
+      .from('executions')
+      .update({ 
+        status: newStatus,
+        store_name: mappedStore, // Saves the name you typed/edited
+        reviewed_at: new Date().toISOString()
+      })
+      .eq('id', execution.id);
+  
+    if (!error) {
+      onUpdate(); // Refreshes the list so this card disappears
+    } else {
+      alert("Error updating record: " + error.message);
+    }
+  };
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex mb-6">
@@ -45,13 +62,19 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
 
         {/* Actions */}
         <div className="flex gap-3">
-          <button className="flex-1 bg-green-50 text-green-700 font-semibold py-2 px-4 rounded-lg border border-green-200 hover:bg-green-100 transition-colors">
-            Approve & Tag →
-          </button>
-          <button className="flex-1 bg-red-50 text-red-700 font-semibold py-2 px-4 rounded-lg border border-red-200 hover:bg-red-100 transition-colors">
-            Reject & Tag →
-          </button>
-        </div>
+  <button 
+    onClick={() => handleAction('approved')}
+    className="flex-1 bg-green-50 text-green-700 font-semibold py-2 px-4 rounded-lg border border-green-200 hover:bg-green-100"
+  >
+    Approve & Tag →
+  </button>
+  <button 
+    onClick={() => handleAction('rejected')}
+    className="flex-1 bg-red-50 text-red-700 font-semibold py-2 px-4 rounded-lg border border-red-200 hover:bg-red-100"
+  >
+    Reject
+  </button>
+</div>
       </div>
     </div>
   );

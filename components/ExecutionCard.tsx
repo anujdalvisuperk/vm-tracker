@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { supabase } from '../lib/supabaseClient'; // <--- ADD THIS LINE
 
 export default function ExecutionCard({ execution, onUpdate }: { execution: any, onUpdate: () => void }) {
   // Pre-fill the input with the extracted name from Slack

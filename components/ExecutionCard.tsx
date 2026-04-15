@@ -22,7 +22,9 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Slack Submission</p>
-              <p className="text-slate-700 italic">"{execution.raw_text || 'No caption provided'}"</p>
+              <p className="text-slate-700 italic">
+  &quot;{execution.raw_text || 'No caption provided'}&quot;
+</p>
             </div>
             <p className="text-xs text-slate-400">
               {new Date(execution.submission_date).toLocaleString()}

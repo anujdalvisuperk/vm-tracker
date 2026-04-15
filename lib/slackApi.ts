@@ -96,24 +96,22 @@ export async function getLatestVMExecutions(lastSyncTimestamp?: string) {
     }
 
     // 3. Extract the data if an image exists
-    if (finalMessageToUse.files && finalMessageToUse.files.length > 0) {
-      // Find the first valid image file (jpeg/png)
-      const imageFile = finalMessageToUse.files.find((f) =>
-        f.mimetype.startsWith('image/')
-      );
-
-      if (imageFile) {
-        processedExecutions.push({
-          slack_message_id: finalMessageToUse.ts, // Unique ID
-          slack_thread_ts: msg.thread_ts || null, // Keep track if it was a thread
-          raw_text: msg.text, // The store name they typed
-          image_url: imageFile.url_private, // The secure Slack image URL
-          submission_date: new Date(
-            parseFloat(finalMessageToUse.ts) * 1000
-          ).toISOString(),
-        });
-      }
-    }
+if (finalMessageToUse.files && finalMessageToUse.files.length > 0) {
+  // FIND THE FIRST VALID IMAGE: Added safety checks here
+  const imageFile = finalMessageToUse.files.find(f => 
+    f.mimetype && typeof f.mimetype === 'string' && f.mimetype.startsWith('image/')
+  );
+  
+  if (imageFile) {
+    processedExecutions.push({
+      slack_message_id: finalMessageToUse.ts,
+      slack_thread_ts: msg.thread_ts || null,
+      raw_text: msg.text || "No text",
+      image_url: imageFile.url_private,
+      submission_date: new Date(parseFloat(finalMessageToUse.ts) * 1000).toISOString(),
+    });
+  }
+}
   }
 
   return processedExecutions;

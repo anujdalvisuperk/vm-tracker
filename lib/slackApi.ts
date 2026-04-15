@@ -2,9 +2,7 @@
 
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_CHANNEL_ID = process.env.SLACK_CHANNEL_ID;
-
-// Controls how far back the crawler looks to save database space
-const DAYS_TO_SYNC = 1; 
+const DAYS_TO_SYNC = 2; 
 
 export interface SlackMessage {
   type: string;
@@ -15,9 +13,6 @@ export interface SlackMessage {
   files?: Array<{ id: string; url_private: string; mimetype: string; }>;
 }
 
-/**
- * Cleans up the raw Slack text to attempt to isolate the Store Name
- */
 const extractStoreName = (text: string) => {
   if (!text || text.trim() === "" || text.toLowerCase().includes("pazo")) return "";
   return text
@@ -27,9 +22,6 @@ const extractStoreName = (text: string) => {
     .trim();
 };
 
-/**
- * Fetch main channel history with a time limit
- */
 async function fetchChannelHistory(cursor?: string, oldest?: string) {
   let url = `https://slack.com/api/conversations.history?channel=${SLACK_CHANNEL_ID}&limit=100`;
   if (cursor) url += `&cursor=${cursor}`;
@@ -43,9 +35,6 @@ async function fetchChannelHistory(cursor?: string, oldest?: string) {
   return data;
 }
 
-/**
- * Fetch replies inside a specific thread
- */
 async function fetchThreadReplies(thread_ts: string) {
   const url = `https://slack.com/api/conversations.replies?channel=${SLACK_CHANNEL_ID}&ts=${thread_ts}`;
   const response = await fetch(url, { 
@@ -55,18 +44,13 @@ async function fetchThreadReplies(thread_ts: string) {
   return data.ok ? data.messages : [];
 }
 
-/**
- * MAIN CRAWLER ENGINE
- */
 export async function getLatestVMExecutions() {
   let allMessages: SlackMessage[] = [];
   let nextCursor: string | undefined = undefined;
   let hasMore = true;
 
-  // Calculate the UNIX timestamp for 7 days ago
   const oldestTimestamp = (Math.floor(Date.now() / 1000) - (DAYS_TO_SYNC * 24 * 60 * 60)).toString();
 
-  // 1. Fetch all messages in the last 7 days
   while (hasMore) {
     const data = await fetchChannelHistory(nextCursor, oldestTimestamp);
     allMessages = allMessages.concat(data.messages);
@@ -79,31 +63,39 @@ export async function getLatestVMExecutions() {
 
   const processedExecutions = [];
 
-  // 2. Process messages into individual records
   for (let i = 0; i < allMessages.length; i++) {
     const msg = allMessages[i];
 
-    // Check if the message contains files (images)
     if (msg.files && msg.files.length > 0) {
       for (const file of msg.files) {
         
-        // Ensure it is actually an image
         if (file.mimetype && typeof file.mimetype === 'string' && file.mimetype.startsWith('image/')) {
           
+          // --- THE ULTIMATE CAPTION VACUUM ---
           let finalCaption = msg.text || "";
 
-          // --- SMART CAPTION FALLBACK LOGIC ---
-          
-          // Fallback A: If empty, check the Thread for replies
+          // 1. Did Slack hide it inside the file object itself? (Common for mobile uploads)
+          if (!finalCaption.trim()) {
+            const fileTitle = (file as any).title || "";
+            const fileComment = (file as any).initial_comment?.comment || "";
+            
+            // Only use the file title if it's not an auto-generated garbage name like "IMG_1234.JPG"
+            if (fileTitle && !fileTitle.toLowerCase().includes('image') && !fileTitle.toLowerCase().includes('.jpg')) {
+              finalCaption = fileTitle;
+            } else if (fileComment) {
+              finalCaption = fileComment;
+            }
+          }
+
+          // 2. Is it a reply in a thread?
           if (!finalCaption.trim() && msg.thread_ts) {
             const replies = await fetchThreadReplies(msg.thread_ts);
-            // Find the first reply that actually has text
             const textFound = replies.find((r: any) => r.text && r.text.trim().length > 0);
             if (textFound) finalCaption = textFound.text;
           }
 
-          // Fallback B: If STILL empty, check the message immediately BEFORE this one
-          // (Slack API returns messages in reverse chronological order, so [i + 1] is the older message)
+          // 3. Did they type text IMMEDIATELY BEFORE uploading the photo? (Older message)
+          // Slack returns newest first, so [i + 1] is older.
           if (!finalCaption.trim() && allMessages[i + 1]) {
             const prevMsg = allMessages[i + 1];
             if (prevMsg.text && (!prevMsg.files || prevMsg.files.length === 0)) {
@@ -111,7 +103,16 @@ export async function getLatestVMExecutions() {
             }
           }
 
-          // 3. Push to final array to be inserted into Database
+          // 4. Did they type text IMMEDIATELY AFTER uploading the photo? (Newer message)
+          // [i - 1] is the newer message.
+          if (!finalCaption.trim() && i > 0 && allMessages[i - 1]) {
+            const nextMsg = allMessages[i - 1];
+            if (nextMsg.text && (!nextMsg.files || nextMsg.files.length === 0)) {
+              finalCaption = nextMsg.text;
+            }
+          }
+          // ------------------------------------
+
           processedExecutions.push({
             slack_message_id: `${msg.ts}-${file.id}`, 
             slack_thread_ts: msg.thread_ts || null, 

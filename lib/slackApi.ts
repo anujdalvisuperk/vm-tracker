@@ -102,15 +102,26 @@ if (finalMessageToUse.files && finalMessageToUse.files.length > 0) {
     f.mimetype && typeof f.mimetype === 'string' && f.mimetype.startsWith('image/')
   );
   
-  if (imageFile) {
-    processedExecutions.push({
-      slack_message_id: finalMessageToUse.ts,
-      slack_thread_ts: msg.thread_ts || null,
-      raw_text: msg.text || "No text",
-      image_url: imageFile.url_private,
-      submission_date: new Date(parseFloat(finalMessageToUse.ts) * 1000).toISOString(),
-    });
-  }
+  // Simple helper to try and find the store name from the message
+const extractStoreName = (text: string) => {
+  if (!text) return "";
+  // Removes common filler words partners use in Slack
+  return text
+    .replace(/done|sir|for|store|superk|check|vm|execution/gi, "")
+    .replace(/[!.,]/g, "")
+    .trim();
+};
+
+if (imageFile) {
+  processedExecutions.push({
+    slack_message_id: finalMessageToUse.ts,
+    slack_thread_ts: msg.thread_ts || null,
+    raw_text: msg.text || "",
+    extracted_store: extractStoreName(msg.text || ""), // New Field!
+    image_url: imageFile.url_private,
+    submission_date: new Date(parseFloat(finalMessageToUse.ts) * 1000).toISOString(),
+  });
+}
 }
   }
 

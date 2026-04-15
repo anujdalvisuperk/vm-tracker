@@ -22,16 +22,15 @@ export interface SlackMessage {
  */
 const extractStoreName = (text: string) => {
   if (!text || text.trim() === "" || text.toLowerCase().includes("pazo")) return "";
-  
   return text
     .replace(/done|sir|for|store|superk|check|vm|execution|implementation/gi, "")
-    .replace(/[!.,]/g, "") // Remove punctuation
-    .replace(/\s+/g, " ")  // Remove extra spaces
+    .replace(/[!.,]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 };
 
 /**
- * Fetch main channel messages
+ * Helper: Fetch main channel history
  */
 async function fetchChannelHistory(cursor?: string) {
   let url = `https://slack.com/api/conversations.history?channel=${SLACK_CHANNEL_ID}&limit=100`;
@@ -43,8 +42,20 @@ async function fetchChannelHistory(cursor?: string) {
 
   const data = await response.json();
   if (!data.ok) throw new Error(`Slack API Error: ${data.error}`);
-
   return data;
+}
+
+/**
+ * Helper: Fetch replies inside a specific thread
+ */
+async function fetchThreadReplies(thread_ts: string) {
+  const url = `https://slack.com/api/conversations.replies?channel=${SLACK_CHANNEL_ID}&ts=${thread_ts}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
+  });
+  const data = await response.json();
+  if (!data.ok) return [];
+  return data.messages as SlackMessage[];
 }
 
 /**
@@ -72,18 +83,14 @@ export async function getLatestVMExecutions() {
       for (const file of msg.files) {
         if (file.mimetype?.startsWith('image/')) {
           
-          // --- NEW CAPTION LOGIC ---
           let finalCaption = msg.text || "";
 
-          // If current message is empty, but part of a thread/group, 
-          // fetch the thread to find the first message with text.
+          // If current message has no text, check the thread for context
           if ((!finalCaption || finalCaption.trim() === "") && msg.thread_ts) {
             const replies = await fetchThreadReplies(msg.thread_ts);
-            // Find the first message in the thread that actually has text
             const textFound = replies.find(r => r.text && r.text.trim().length > 0);
             if (textFound) finalCaption = textFound.text;
           }
-          // -------------------------
 
           processedExecutions.push({
             slack_message_id: `${msg.ts}-${file.id}`, 

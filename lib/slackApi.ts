@@ -2,7 +2,7 @@
 
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_CHANNEL_ID = process.env.SLACK_CHANNEL_ID;
-const DAYS_TO_SYNC = 7; 
+const DAYS_TO_SYNC = 2; 
 
 export interface SlackMessage {
   type: string;

@@ -2,15 +2,17 @@
 
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_CHANNEL_ID = process.env.SLACK_CHANNEL_ID;
-const DAYS_TO_SYNC = 2; 
+const DAYS_TO_SYNC = 7; 
 
 export interface SlackMessage {
   type: string;
   user: string;
-  text: string;
+  text?: string;
   ts: string;
   thread_ts?: string;
-  files?: Array<{ id: string; url_private: string; mimetype: string; }>;
+  blocks?: any[];
+  attachments?: any[];
+  files?: Array<{ id: string; url_private: string; mimetype: string; title?: string; initial_comment?: any }>;
 }
 
 const extractStoreName = (text: string) => {
@@ -35,13 +37,24 @@ async function fetchChannelHistory(cursor?: string, oldest?: string) {
   return data;
 }
 
-async function fetchThreadReplies(thread_ts: string) {
-  const url = `https://slack.com/api/conversations.replies?channel=${SLACK_CHANNEL_ID}&ts=${thread_ts}`;
-  const response = await fetch(url, { 
-    headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` } 
-  });
-  const data = await response.json();
-  return data.ok ? data.messages : [];
+// Deep text extraction function
+function getDeepText(msg: SlackMessage): string {
+  let foundText = "";
+  if (msg.text) foundText += msg.text + " ";
+  
+  if (msg.blocks) {
+    msg.blocks.forEach((block: any) => {
+      if (block.text && block.text.text) foundText += block.text.text + " ";
+    });
+  }
+  
+  if (msg.attachments) {
+    msg.attachments.forEach((att: any) => {
+      if (att.text) foundText += att.text + " ";
+      if (att.fallback) foundText += att.fallback + " ";
+    });
+  }
+  return foundText.trim();
 }
 
 export async function getLatestVMExecutions() {
@@ -68,55 +81,41 @@ export async function getLatestVMExecutions() {
 
     if (msg.files && msg.files.length > 0) {
       for (const file of msg.files) {
-        
         if (file.mimetype && typeof file.mimetype === 'string' && file.mimetype.startsWith('image/')) {
           
-          // --- THE ULTIMATE CAPTION VACUUM ---
-          let finalCaption = msg.text || "";
+          let finalCaption = getDeepText(msg);
 
-          // 1. Did Slack hide it inside the file object itself? (Common for mobile uploads)
-          if (!finalCaption.trim()) {
-            const fileTitle = (file as any).title || "";
-            const fileComment = (file as any).initial_comment?.comment || "";
-            
-            // Only use the file title if it's not an auto-generated garbage name like "IMG_1234.JPG"
-            if (fileTitle && !fileTitle.toLowerCase().includes('image') && !fileTitle.toLowerCase().includes('.jpg')) {
-              finalCaption = fileTitle;
-            } else if (fileComment) {
-              finalCaption = fileComment;
+          // Check file object itself
+          if (!finalCaption) {
+            if (file.title && !file.title.toLowerCase().includes('image') && !file.title.toLowerCase().includes('.jpg')) {
+              finalCaption = file.title;
+            } else if (file.initial_comment && file.initial_comment.comment) {
+              finalCaption = file.initial_comment.comment;
             }
           }
 
-          // 2. Is it a reply in a thread?
-          if (!finalCaption.trim() && msg.thread_ts) {
-            const replies = await fetchThreadReplies(msg.thread_ts);
-            const textFound = replies.find((r: any) => r.text && r.text.trim().length > 0);
-            if (textFound) finalCaption = textFound.text;
-          }
-
-          // 3. Did they type text IMMEDIATELY BEFORE uploading the photo? (Older message)
-          // Slack returns newest first, so [i + 1] is older.
-          if (!finalCaption.trim() && allMessages[i + 1]) {
+          // Check previous message (older message)
+          if (!finalCaption && allMessages[i + 1]) {
             const prevMsg = allMessages[i + 1];
-            if (prevMsg.text && (!prevMsg.files || prevMsg.files.length === 0)) {
-              finalCaption = prevMsg.text;
+            if (!prevMsg.files || prevMsg.files.length === 0) {
+              finalCaption = getDeepText(prevMsg);
             }
           }
 
-          // 4. Did they type text IMMEDIATELY AFTER uploading the photo? (Newer message)
-          // [i - 1] is the newer message.
-          if (!finalCaption.trim() && i > 0 && allMessages[i - 1]) {
-            const nextMsg = allMessages[i - 1];
-            if (nextMsg.text && (!nextMsg.files || nextMsg.files.length === 0)) {
-              finalCaption = nextMsg.text;
-            }
+          // X-RAY FALLBACK: If absolutely empty, dump the Slack JSON so you can see it
+          if (!finalCaption) {
+            finalCaption = "DEBUG JSON: " + JSON.stringify({
+              text: msg.text,
+              blocks: !!msg.blocks,
+              attachments: !!msg.attachments,
+              file_title: file.title
+            });
           }
-          // ------------------------------------
 
           processedExecutions.push({
             slack_message_id: `${msg.ts}-${file.id}`, 
             slack_thread_ts: msg.thread_ts || null, 
-            raw_text: finalCaption || "No caption found",
+            raw_text: finalCaption,
             extracted_store: extractStoreName(finalCaption),
             image_url: file.url_private,
             submission_date: new Date(parseFloat(msg.ts) * 1000).toISOString(),

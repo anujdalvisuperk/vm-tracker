@@ -1,49 +1,57 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
+import ExecutionCard from '../components/ExecutionCard';
 
-export default function Home() {
-  const [status, setStatus] = useState('Ready to test the engine.');
+export default function QueuePage() {
+  const [executions, setExecutions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const runSync = async () => {
-    setStatus('Crawler running... fetching from Slack securely...');
-    try {
-      const response = await fetch('/api/slack-sync', {
-        method: 'POST',
-      });
-      const data = await response.json();
-
-      // Display the result on the screen
-      setStatus(JSON.stringify(data, null, 2));
-    } catch (error: any) {
-      setStatus(`Error: ${error.message}`);
-    }
+  const fetchQueue = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('executions')
+      .select('*')
+      .eq('status', 'pending_admin')
+      .order('submission_date', { ascending: false });
+    
+    setExecutions(data || []);
+    setLoading(false);
   };
 
+  useEffect(() => {
+    fetchQueue();
+  }, []);
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-8">
-      <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md text-center">
-        <h1 className="text-2xl font-bold mb-2 text-slate-800">
-          VM Sync Engine
-        </h1>
-        <p className="text-slate-500 mb-8">
-          Click below to trigger the crawler.
-        </p>
+    <div className="min-h-screen bg-slate-50 p-8">
+      <div className="max-w-4xl mx-auto">
+        <header className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800">Pending Approvals</h1>
+            <p className="text-slate-500">Review and map store executions from Slack</p>
+          </div>
+          <button 
+            onClick={fetchQueue}
+            className="bg-white border border-slate-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50"
+          >
+            🔄 Refresh Queue
+          </button>
+        </header>
 
-        <button
-          onClick={runSync}
-          className="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-        >
-          Fetch Latest Slack Executions
-        </button>
-
-        <div className="mt-8 text-left">
-          <p className="text-sm font-semibold text-slate-400 mb-2">
-            SERVER RESPONSE:
-          </p>
-          <pre className="bg-slate-900 text-green-400 p-4 rounded-lg overflow-x-auto text-sm">
-            {status}
-          </pre>
-        </div>
+        {loading ? (
+          <div className="text-center py-20 text-slate-400">Loading your queue...</div>
+        ) : executions.length === 0 ? (
+          <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400">
+            Inbox Zero! No pending executions found.
+          </div>
+        ) : (
+          <div>
+            {executions.map(exec => (
+              <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchQueue} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

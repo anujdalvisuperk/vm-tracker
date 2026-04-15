@@ -3,7 +3,6 @@
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_CHANNEL_ID = process.env.SLACK_CHANNEL_ID;
 
-// Define what a Slack message looks like for TypeScript
 export interface SlackMessage {
   type: string;
   user: string;
@@ -19,13 +18,24 @@ export interface SlackMessage {
 }
 
 /**
- * Helper 1: Fetch main channel messages (with pagination)
+ * Clean up the raw Slack text to attempt to isolate the Store Name
  */
-async function fetchChannelHistory(cursor?: string, oldest?: string) {
-  let url = `https://slack.com/api/conversations.history?channel=${SLACK_CHANNEL_ID}&limit=1000`;
+const extractStoreName = (text: string) => {
+  if (!text || text.trim() === "" || text.toLowerCase().includes("pazo")) return "";
+  
+  return text
+    .replace(/done|sir|for|store|superk|check|vm|execution|implementation/gi, "")
+    .replace(/[!.,]/g, "") // Remove punctuation
+    .replace(/\s+/g, " ")  // Remove extra spaces
+    .trim();
+};
 
+/**
+ * Fetch main channel messages
+ */
+async function fetchChannelHistory(cursor?: string) {
+  let url = `https://slack.com/api/conversations.history?channel=${SLACK_CHANNEL_ID}&limit=100`;
   if (cursor) url += `&cursor=${cursor}`;
-  if (oldest) url += `&oldest=${oldest}`; // Used to only fetch new messages since last sync
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
@@ -38,35 +48,18 @@ async function fetchChannelHistory(cursor?: string, oldest?: string) {
 }
 
 /**
- * Helper 2: Fetch replies inside a specific thread
+ * MAIN ENGINE
  */
-async function fetchThreadReplies(thread_ts: string) {
-  const url = `https://slack.com/api/conversations.replies?channel=${SLACK_CHANNEL_ID}&ts=${thread_ts}`;
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
-  });
-
-  const data = await response.json();
-  if (!data.ok) return [];
-
-  // Return all messages in the thread
-  return data.messages as SlackMessage[];
-}
-
-/**
- * MAIN ENGINE: Orchestrates the fetch, thread checking, and image extraction
- */
-export async function getLatestVMExecutions(lastSyncTimestamp?: string) {
+export async function getLatestVMExecutions() {
   let allMessages: SlackMessage[] = [];
   let nextCursor: string | undefined = undefined;
   let hasMore = true;
 
-  // 1. Pagination Loop: Keep fetching until Slack says there are no more messages
+  // 1. Fetch historical messages (Loop handles pagination)
   while (hasMore) {
-    const data = await fetchChannelHistory(nextCursor, lastSyncTimestamp);
+    const data = await fetchChannelHistory(nextCursor);
     allMessages = allMessages.concat(data.messages);
-
+    
     if (data.response_metadata && data.response_metadata.next_cursor) {
       nextCursor = data.response_metadata.next_cursor;
     } else {
@@ -76,53 +69,31 @@ export async function getLatestVMExecutions(lastSyncTimestamp?: string) {
 
   const processedExecutions = [];
 
-  // 2. Process each message to find images and handle threads
+  // 2. Process messages into individual records
   for (const msg of allMessages) {
-    let finalMessageToUse = msg;
+    // Check if the message contains files (images)
+    if (msg.files && msg.files.length > 0) {
+      
+      for (const file of msg.files) {
+        // Only process actual images
+        if (file.mimetype && typeof file.mimetype === 'string' && file.mimetype.startsWith('image/')) {
+          
+          // CAPTION LOGIC: Use the message text as the caption.
+          // In Slack, if 3 photos are uploaded at once, msg.text contains the caption for all 3.
+          const rawCaption = msg.text || "";
 
-    // Check if this message has a thread (replies)
-    if (msg.thread_ts && msg.reply_count && msg.reply_count > 0) {
-      const threadMessages = await fetchThreadReplies(msg.thread_ts);
-
-      // Look for the LAST message in the thread that contains an image attachment
-      const repliesWithImages = threadMessages.filter(
-        (reply) => reply.files && reply.files.length > 0
-      );
-
-      if (repliesWithImages.length > 0) {
-        // Override the main message with the corrected reply from the store partner
-        finalMessageToUse = repliesWithImages[repliesWithImages.length - 1];
+          processedExecutions.push({
+            // Create a unique ID combining message timestamp and file ID
+            slack_message_id: `${msg.ts}-${file.id}`, 
+            slack_thread_ts: msg.thread_ts || null,
+            raw_text: rawCaption || "No caption provided",
+            extracted_store: extractStoreName(rawCaption),
+            image_url: file.url_private,
+            submission_date: new Date(parseFloat(msg.ts) * 1000).toISOString(),
+          });
+        }
       }
     }
-
-    // 3. Extract the data if an image exists
-if (finalMessageToUse.files && finalMessageToUse.files.length > 0) {
-  // FIND THE FIRST VALID IMAGE: Added safety checks here
-  const imageFile = finalMessageToUse.files.find(f => 
-    f.mimetype && typeof f.mimetype === 'string' && f.mimetype.startsWith('image/')
-  );
-  
-  // Simple helper to try and find the store name from the message
-const extractStoreName = (text: string) => {
-  if (!text) return "";
-  // Removes common filler words partners use in Slack
-  return text
-    .replace(/done|sir|for|store|superk|check|vm|execution/gi, "")
-    .replace(/[!.,]/g, "")
-    .trim();
-};
-
-if (imageFile) {
-  processedExecutions.push({
-    slack_message_id: finalMessageToUse.ts,
-    slack_thread_ts: msg.thread_ts || null,
-    raw_text: msg.text || "",
-    extracted_store: extractStoreName(msg.text || ""), // New Field!
-    image_url: imageFile.url_private,
-    submission_date: new Date(parseFloat(finalMessageToUse.ts) * 1000).toISOString(),
-  });
-}
-}
   }
 
   return processedExecutions;

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabaseClient'; // Adjust path if needed
 
-// CRITICAL FIX: This stops Vercel from caching the URL so it actually runs fresh every time you refresh!
+// Stops Vercel from caching the URL
 export const dynamic = 'force-dynamic'; 
 
 export async function GET(req: Request) {
@@ -17,13 +17,12 @@ export async function GET(req: Request) {
     const oldestTimestamp = (Math.floor(Date.now() / 1000) - (7 * 24 * 60 * 60)).toString();
     const slackUrl = `https://slack.com/api/conversations.history?channel=${CHANNEL_ID}&limit=100&oldest=${oldestTimestamp}`;
 
-    // Ensure fetch isn't cached
     const slackRes = await fetch(slackUrl, {
       headers: {
         'Authorization': `Bearer ${SLACK_BOT_TOKEN}`,
         'Content-Type': 'application/json'
       },
-      cache: 'no-store' // CRITICAL: Force Slack to give us fresh data
+      cache: 'no-store'
     });
 
     const slackData = await slackRes.json();
@@ -34,9 +33,8 @@ export async function GET(req: Request) {
 
     const messages = slackData.messages || [];
     let importedCount = 0;
-    let errors = [];
+    let errors: string[] = [];
 
-    // Helper to clean names
     const extractStoreName = (text: string) => {
       if (!text) return "";
       return text.replace(/done|sir|for|store|superk|check|vm|execution|implementation/gi, "").replace(/[!.,]/g, "").trim();
@@ -49,7 +47,6 @@ export async function GET(req: Request) {
         for (const file of msg.files) {
           if (file.mimetype?.startsWith('image/')) {
             
-            // 1. Check if we already have this exact file
             const uniqueId = `${msg.ts}-${file.id}`;
             const { data: existing } = await supabase
               .from('executions')
@@ -57,22 +54,52 @@ export async function GET(req: Request) {
               .eq('slack_message_id', uniqueId)
               .single();
 
-            // 2. If it's new, let's process the caption
             if (!existing) {
               
               let finalCaption = msg.text || "";
 
-              // Fallback: Check the message immediately BEFORE this one
               if (!finalCaption.trim() && messages[i + 1] && messages[i + 1].text) {
                 finalCaption = messages[i + 1].text;
               }
 
-              // 3. Insert into Supabase
+              // --- THE MISSING PIECE: Download & Upload Image ---
+              let finalImageUrl = "";
+              try {
+                // 1. Download from Slack
+                const imageRes = await fetch(file.url_private, {
+                  headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
+                });
+                const imageBlob = await imageRes.blob();
+
+                // 2. Upload to Supabase Storage
+                const fileName = `${uniqueId}-${file.name || 'image.jpg'}`;
+                const { error: uploadError } = await supabase.storage
+                  .from('vm-images')
+                  .upload(fileName, imageBlob, {
+                    contentType: file.mimetype,
+                    upsert: true
+                  });
+
+                if (uploadError) throw uploadError;
+
+                // 3. Get the permanent Public URL
+                const { data: publicUrlData } = supabase.storage
+                  .from('vm-images')
+                  .getPublicUrl(fileName);
+
+                finalImageUrl = publicUrlData.publicUrl;
+              } catch (imgError: any) {
+                console.error("Storage Error:", imgError);
+                errors.push(`Image upload failed for ${uniqueId}`);
+                continue; // Skip saving to database if the image failed to upload
+              }
+              // --------------------------------------------------
+
               const { error } = await supabase.from('executions').insert([{
                 slack_message_id: uniqueId,
                 raw_text: finalCaption || "No caption found",
                 extracted_store: extractStoreName(finalCaption),
-                image_url: file.url_private,
+                image_url: finalImageUrl, // Uses the public Supabase URL!
                 status: 'pending_admin',
                 submission_date: new Date(parseFloat(msg.ts) * 1000).toISOString(),
               }]);

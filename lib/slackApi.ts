@@ -2,7 +2,7 @@
 
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_CHANNEL_ID = process.env.SLACK_CHANNEL_ID;
-const DAYS_TO_SYNC = 1; // <--- You can change this number (e.g., 2, 7, 30)
+const DAYS_TO_SYNC = 1; 
 
 export interface SlackMessage {
   type: string;
@@ -24,7 +24,7 @@ const extractStoreName = (text: string) => {
 async function fetchChannelHistory(cursor?: string, oldest?: string) {
   let url = `https://slack.com/api/conversations.history?channel=${SLACK_CHANNEL_ID}&limit=100`;
   if (cursor) url += `&cursor=${cursor}`;
-  if (oldest) url += `&oldest=${oldest}`; // Only fetch messages since X days ago
+  if (oldest) url += `&oldest=${oldest}`;
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}` },
@@ -46,7 +46,6 @@ export async function getLatestVMExecutions() {
   let nextCursor: string | undefined = undefined;
   let hasMore = true;
 
-  // Calculate the timestamp for X days ago
   const oldestTimestamp = (Math.floor(Date.now() / 1000) - (DAYS_TO_SYNC * 24 * 60 * 60)).toString();
 
   while (hasMore) {
@@ -70,24 +69,23 @@ export async function getLatestVMExecutions() {
           
           let finalCaption = msg.text || "";
 
-          // --- SMART CAPTION FALLBACK ---
-          // 1. If empty, check the Thread
+          // Smart fallback for captions
           if (!finalCaption.trim() && msg.thread_ts) {
             const replies = await fetchThreadReplies(msg.thread_ts);
             const textFound = replies.find((r: any) => r.text && r.text.trim().length > 0);
             if (textFound) finalCaption = textFound.text;
           }
 
-          // 2. If STILL empty, check the message immediately BEFORE this one (common in Slack)
           if (!finalCaption.trim() && allMessages[i + 1]) {
             const prevMsg = allMessages[i + 1];
-            if (prevMsg.text && !prevMsg.files) { // Only take it if it's a text-only message
+            if (prevMsg.text && !prevMsg.files) {
               finalCaption = prevMsg.text;
             }
           }
 
           processedExecutions.push({
             slack_message_id: `${msg.ts}-${file.id}`, 
+            slack_thread_ts: msg.thread_ts || null, // Re-added this
             raw_text: finalCaption || "No caption found",
             extracted_store: extractStoreName(finalCaption),
             image_url: file.url_private,

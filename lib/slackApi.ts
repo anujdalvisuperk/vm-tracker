@@ -55,12 +55,10 @@ export async function getLatestVMExecutions() {
   let nextCursor: string | undefined = undefined;
   let hasMore = true;
 
-  // 1. Fetch historical messages (Loop handles pagination)
   while (hasMore) {
     const data = await fetchChannelHistory(nextCursor);
     allMessages = allMessages.concat(data.messages);
-    
-    if (data.response_metadata && data.response_metadata.next_cursor) {
+    if (data.response_metadata?.next_cursor) {
       nextCursor = data.response_metadata.next_cursor;
     } else {
       hasMore = false;
@@ -69,25 +67,29 @@ export async function getLatestVMExecutions() {
 
   const processedExecutions = [];
 
-  // 2. Process messages into individual records
   for (const msg of allMessages) {
-    // Check if the message contains files (images)
     if (msg.files && msg.files.length > 0) {
-      
       for (const file of msg.files) {
-        // Only process actual images
-        if (file.mimetype && typeof file.mimetype === 'string' && file.mimetype.startsWith('image/')) {
+        if (file.mimetype?.startsWith('image/')) {
           
-          // CAPTION LOGIC: Use the message text as the caption.
-          // In Slack, if 3 photos are uploaded at once, msg.text contains the caption for all 3.
-          const rawCaption = msg.text || "";
+          // --- NEW CAPTION LOGIC ---
+          let finalCaption = msg.text || "";
+
+          // If current message is empty, but part of a thread/group, 
+          // fetch the thread to find the first message with text.
+          if ((!finalCaption || finalCaption.trim() === "") && msg.thread_ts) {
+            const replies = await fetchThreadReplies(msg.thread_ts);
+            // Find the first message in the thread that actually has text
+            const textFound = replies.find(r => r.text && r.text.trim().length > 0);
+            if (textFound) finalCaption = textFound.text;
+          }
+          // -------------------------
 
           processedExecutions.push({
-            // Create a unique ID combining message timestamp and file ID
             slack_message_id: `${msg.ts}-${file.id}`, 
             slack_thread_ts: msg.thread_ts || null,
-            raw_text: rawCaption || "No caption provided",
-            extracted_store: extractStoreName(rawCaption),
+            raw_text: finalCaption || "No caption found",
+            extracted_store: extractStoreName(finalCaption),
             image_url: file.url_private,
             submission_date: new Date(parseFloat(msg.ts) * 1000).toISOString(),
           });
@@ -95,6 +97,5 @@ export async function getLatestVMExecutions() {
       }
     }
   }
-
   return processedExecutions;
 }

@@ -3,15 +3,6 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient'; 
 import ExecutionCard from '../components/ExecutionCard'; 
 
-// --- MOCK DATA FOR MATRIX (We will wire this next) ---
-const MONTHS = ['January', 'February', 'March', 'April'];
-const MOCK_GENERAL_DATA = [
-  { week: 'Week 1', execution: 82 },
-  { week: 'Week 2', execution: 88 },
-  { week: 'Week 3', execution: 94 },
-  { week: 'Week 4', execution: 76 },
-];
-
 export default function VMDashboard() {
   // --- AUTHENTICATION STATE ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -20,13 +11,11 @@ export default function VMDashboard() {
 
   // --- NAVIGATION STATE ---
   const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'review' | 'settings' | 'login'>('dashboard');
-  const [dashboardTab, setDashboardTab] = useState<'general' | string>('general');
   const [settingsTab, setSettingsTab] = useState<'stores' | 'campaigns'>('stores');
-  const [selectedMonth, setSelectedMonth] = useState('April');
 
   // --- LIVE SUPABASE DATA STATE ---
   const [pendingExecutions, setPendingExecutions] = useState<any[]>([]);
-  const [allExecutions, setAllExecutions] = useState<any[]>([]); // NEW: Holds all historical data
+  const [allExecutions, setAllExecutions] = useState<any[]>([]);
   const [storesList, setStoresList] = useState<any[]>([]);
   const [campaignsList, setCampaignsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,7 +28,7 @@ export default function VMDashboard() {
 
   const [selectedPhoto, setSelectedPhoto] = useState<{ store: string; date: string; status: string; image: string; raw_text: string } | null>(null);
 
-  // New Form States
+  // Form States for Settings
   const [newStoreName, setNewStoreName] = useState('');
   const [newCampName, setNewCampName] = useState('');
   const [newCampPayout, setNewCampPayout] = useState<number | ''>('');
@@ -50,19 +39,15 @@ export default function VMDashboard() {
   const fetchData = async () => {
     setIsLoading(true);
     
-    // Fetch Queue (Pending only)
     const { data: qData } = await supabase.from('executions').select('*').eq('status', 'pending_admin').order('submission_date', { ascending: false });
     if (qData) setPendingExecutions(qData);
 
-    // Fetch History (Everything)
     const { data: hData } = await supabase.from('executions').select('*').order('submission_date', { ascending: false });
     if (hData) setAllExecutions(hData);
 
-    // Fetch Stores
     const { data: sData } = await supabase.from('stores').select('*').order('name');
     if (sData) setStoresList(sData);
 
-    // Fetch Campaigns
     const { data: cData } = await supabase.from('campaigns').select('*').order('created_at', { ascending: false });
     if (cData) setCampaignsList(cData);
     
@@ -142,20 +127,20 @@ export default function VMDashboard() {
   // --- 4. LIVE FILTERING FOR HISTORY TABLE ---
   const filteredReviewData = useMemo(() => {
     return allExecutions.filter(item => {
-      // Map database status to UI status
       const mappedStatus = item.status === 'pending_admin' ? 'in_review' : item.status;
       const finalStoreName = item.store_name || item.extracted_store || 'Unmapped Store';
+      const campName = item.campaign_name || 'Unassigned';
       
       const matchesStatus = reviewFilter === 'all' || mappedStatus === reviewFilter;
       const matchesStore = storeFilter === 'all' || finalStoreName === storeFilter;
-      // Note: We will wire campaign matching in the next step, assuming 'all' for now
+      const matchesCampaign = campaignFilter === 'all' || campName === campaignFilter;
       
-      const searchStr = `${finalStoreName} ${item.raw_text || ''}`.toLowerCase();
+      const searchStr = `${finalStoreName} ${item.raw_text || ''} ${campName}`.toLowerCase();
       const matchesSearch = searchStr.includes(searchQuery.toLowerCase());
       
-      return matchesStatus && matchesStore && matchesSearch;
+      return matchesStatus && matchesStore && matchesCampaign && matchesSearch;
     });
-  }, [allExecutions, reviewFilter, searchQuery, storeFilter]);
+  }, [allExecutions, reviewFilter, searchQuery, storeFilter, campaignFilter]);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans relative">
@@ -205,12 +190,11 @@ export default function VMDashboard() {
         {/* LOGIN PAGE */}
         {mainView === 'login' && (
           <div className="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 animate-in fade-in zoom-in-95 duration-300">
-             {/* ... exact same login UI ... */}
              <div className="text-center mb-8"><div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div><h2 className="text-2xl font-bold text-slate-900">Admin Access</h2></div>
              <form onSubmit={handleLogin} className="space-y-4">
-              <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="Enter Password" className="w-full border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500" />
+              <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="Enter Password" className="w-full border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none" />
               {loginError && <p className="text-red-500 text-sm font-semibold">{loginError}</p>}
-              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-md">Unlock Command Center</button>
+              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-md transition-colors">Unlock Command Center</button>
             </form>
           </div>
         )}
@@ -219,7 +203,7 @@ export default function VMDashboard() {
         {mainView === 'dashboard' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
              <h2 className="text-3xl font-bold text-slate-900 mb-8">Execution Overview</h2>
-             <div className="text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">(Analytics Matrix Active)</div>
+             <div className="text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">(Analytics Matrix will be connected here)</div>
           </div>
         )}
 
@@ -237,6 +221,7 @@ export default function VMDashboard() {
             ) : pendingExecutions.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm flex flex-col items-center">
                 <span className="text-4xl mb-4">🎉</span><h3 className="text-lg font-bold text-slate-900">Inbox Zero!</h3>
+                <p className="text-slate-500 mt-2 text-sm">There are no pending executions to review.</p>
               </div>
             ) : (
               <div className="space-y-6">
@@ -248,9 +233,7 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* =========================================
-            EXECUTION HISTORY (LIVE SUPABASE DATA)
-            ========================================= */}
+        {/* EXECUTION HISTORY (LIVE SUPABASE DATA) */}
         {mainView === 'review' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
             <div className="flex justify-between items-end mb-8">
@@ -260,11 +243,8 @@ export default function VMDashboard() {
               </div>
             </div>
 
-            {/* Table Controls Panel */}
             <div className="flex flex-col gap-4 mb-6 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
               <div className="flex flex-col md:flex-row gap-4">
-                
-                {/* Search */}
                 <div className="flex-1 relative">
                   <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
                   <input 
@@ -276,7 +256,6 @@ export default function VMDashboard() {
                   />
                 </div>
 
-                {/* Filter: Store (Driven by Live DB) */}
                 <div className="w-full md:w-64">
                   <select 
                     value={storeFilter}
@@ -288,7 +267,6 @@ export default function VMDashboard() {
                   </select>
                 </div>
 
-                {/* Filter: Campaign (Driven by Live DB) */}
                 <div className="w-full md:w-64">
                   <select 
                     value={campaignFilter}
@@ -301,7 +279,6 @@ export default function VMDashboard() {
                 </div>
               </div>
 
-              {/* Status Toggles */}
               <div className="flex bg-slate-100 p-1 rounded-lg w-fit">
                 {['all', 'approved', 'rejected', 'in_review'].map(status => (
                   <button
@@ -319,13 +296,13 @@ export default function VMDashboard() {
               </div>
             </div>
 
-            {/* The Live Data Table */}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-widest">
                     <th className="p-4 font-semibold">Store</th>
                     <th className="p-4 font-semibold">Slack Caption</th>
+                    <th className="p-4 font-semibold">Campaign</th>
                     <th className="p-4 font-semibold">Submission Date</th>
                     <th className="p-4 font-semibold">Status</th>
                     <th className="p-4 font-semibold text-right">Action</th>
@@ -338,8 +315,11 @@ export default function VMDashboard() {
                         <td className="p-4 font-medium text-slate-800">
                           {row.store_name || row.extracted_store || 'Unmapped Store'}
                         </td>
-                        <td className="p-4 text-slate-500 text-sm italic max-w-xs truncate">
-                          "{row.raw_text}"
+                        <td className="p-4 text-slate-500 text-sm italic max-w-[200px] truncate">
+                          &quot;{row.raw_text}&quot;
+                        </td>
+                        <td className="p-4 text-slate-600 text-sm font-medium">
+                          {row.campaign_name || '—'}
                         </td>
                         <td className="p-4 text-slate-600 text-sm">
                           {new Date(row.submission_date).toLocaleDateString()}
@@ -364,14 +344,14 @@ export default function VMDashboard() {
                             })}
                             className="text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors"
                           >
-                            View Details
+                            View
                           </button>
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="p-8 text-center text-slate-500">
+                      <td colSpan={6} className="p-8 text-center text-slate-500">
                         No executions found matching your filters.
                       </td>
                     </tr>
@@ -382,11 +362,118 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* MASTER SETTINGS (Abbreviated to keep copy/paste clean, you already have this code!) */}
+        {/* MASTER SETTINGS */}
         {mainView === 'settings' && (
-           <div className="max-w-5xl mx-auto animate-in fade-in duration-500 text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">
-               (Master Settings Active)
-           </div>
+          <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
+            <div className="mb-8"><h2 className="text-3xl font-bold text-slate-900">Master Settings</h2><p className="text-slate-500 mt-1">Manage Store Roster and Active Campaigns.</p></div>
+
+            <div className="flex space-x-1 bg-slate-200/50 p-1 rounded-xl mb-6 w-fit">
+              <button onClick={() => setSettingsTab('stores')} className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${settingsTab === 'stores' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>🏢 Manage Stores</button>
+              <button onClick={() => setSettingsTab('campaigns')} className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${settingsTab === 'campaigns' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>📢 Manage Campaigns</button>
+            </div>
+
+            {/* TAB: STORES */}
+            {settingsTab === 'stores' && (
+              <div className="space-y-6">
+                <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm flex flex-col md:flex-row gap-4 items-end">
+                  <div className="flex-1">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Add Single Store</label>
+                    <div className="flex gap-2">
+                      <input type="text" value={newStoreName} onChange={(e) => setNewStoreName(e.target.value)} placeholder="e.g. SuperK Anantapur" className="flex-1 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                      <button onClick={handleAddSingleStore} className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-800 transition-colors">Add</button>
+                    </div>
+                  </div>
+                  <div className="hidden md:block w-px h-12 bg-slate-200 mx-4"></div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Bulk Import (CSV)</label>
+                    <input type="file" accept=".csv" ref={fileInputRef} onChange={handleCSVUpload} className="hidden" />
+                    <button onClick={() => fileInputRef.current?.click()} className="border border-slate-300 bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-100 flex items-center gap-2 transition-colors">
+                      <span>📁</span> Upload Store List
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-widest">
+                        <th className="p-4 font-semibold">Store Name</th>
+                        <th className="p-4 font-semibold text-right">Alignment Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {storesList.length === 0 && <tr><td colSpan={2} className="p-8 text-center text-slate-500">No stores configured. Add some above!</td></tr>}
+                      {storesList.map(store => (
+                        <tr key={store.id} className="hover:bg-slate-50">
+                          <td className="p-4 font-medium text-slate-800">{store.name}</td>
+                          <td className="p-4 text-right">
+                            <button 
+                              onClick={() => toggleStoreAlignment(store.id, store.aligned)}
+                              className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition-colors border ${store.aligned ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'}`}
+                            >
+                              {store.aligned ? '✓ Aligned' : '✕ Not Aligned'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: CAMPAIGNS */}
+            {settingsTab === 'campaigns' && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                
+                {/* Create Campaign Form */}
+                <div className="md:col-span-1 bg-white p-6 border border-slate-200 rounded-xl shadow-sm h-fit">
+                  <h3 className="text-lg font-bold text-slate-900 mb-6 border-b border-slate-100 pb-2">Create Campaign</h3>
+                  <div className="space-y-4">
+                    <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Campaign Name</label><input type="text" value={newCampName} onChange={(e) => setNewCampName(e.target.value)} placeholder="e.g. Veeba Ketchup" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                    <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Weekly Payout (₹)</label><input type="number" value={newCampPayout} onChange={(e) => setNewCampPayout(Number(e.target.value))} placeholder="500" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                    <div className="pt-2">
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Assign Stores</label>
+                        <button type="button" onClick={selectAllAlignedStores} className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-1 rounded hover:bg-blue-100 transition-colors">+ Select All Aligned</button>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 space-y-1">
+                        {storesList.length === 0 && <p className="text-xs text-slate-400 p-2 text-center">Add stores first!</p>}
+                        {storesList.map(store => (
+                          <label key={store.id} className="flex items-center gap-2 p-1.5 hover:bg-white rounded cursor-pointer transition-colors">
+                            <input type="checkbox" checked={newCampStores.includes(store.name)} onChange={() => toggleStoreInCampaign(store.name)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                            <span className={`text-sm ${!store.aligned && 'text-slate-400 italic'}`}>{store.name} {!store.aligned && '(Unassigned)'}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <button onClick={handleAddCampaign} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 transition-colors mt-4">Create Campaign</button>
+                  </div>
+                </div>
+
+                {/* Active Campaigns List */}
+                <div className="md:col-span-2 space-y-4">
+                  {campaignsList.length === 0 && <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-500">No campaigns created yet.</div>}
+                  {campaignsList.map(campaign => (
+                    <div key={campaign.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h4 className="text-lg font-bold text-slate-900">{campaign.name}</h4>
+                          <p className="text-sm font-semibold text-green-600 mt-1">₹{campaign.payout} / week</p>
+                        </div>
+                        <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1 rounded-full">{campaign.stores.length} Stores Enrolled</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 max-h-24 overflow-y-auto flex flex-wrap gap-2">
+                        {campaign.stores.map((s: string, i: number) => (
+                          <span key={i} className="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-1 rounded shadow-sm">{s}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
       </div>
@@ -407,16 +494,18 @@ export default function VMDashboard() {
                     {selectedPhoto.status}
                   </span>
                 </p>
-                <p className="text-sm text-slate-700 italic mt-2">"{selectedPhoto.raw_text}"</p>
+                <p className="text-sm text-slate-700 italic mt-2">&quot;{selectedPhoto.raw_text}&quot;</p>
               </div>
               <button onClick={() => setSelectedPhoto(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-colors">✕</button>
             </div>
             <div className="bg-slate-100 flex items-center justify-center p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={selectedPhoto.image} alt="Execution Photo" className="max-h-[70vh] object-contain rounded border border-slate-200 shadow-sm" />
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }

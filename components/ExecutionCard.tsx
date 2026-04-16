@@ -25,7 +25,7 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
   }, []);
 
   const handleAction = async (newStatus: 'approved' | 'rejected' | 'pending_admin') => {
-    // Optional: Force user to pick a campaign if approving
+    // Force user to pick a campaign if approving
     if (newStatus === 'approved' && !selectedCampaign) {
       alert("Please select a Campaign before approving.");
       return;
@@ -53,6 +53,7 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
       
       {/* Image Section */}
       <div className="w-[350px] bg-slate-100 flex-shrink-0 relative group">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img 
           src={execution.image_url} 
           alt="Execution" 

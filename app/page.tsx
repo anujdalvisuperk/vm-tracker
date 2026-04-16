@@ -1,13 +1,10 @@
 'use client';
-import { useState, useMemo, useEffect } from 'react';
-import { supabase } from '../lib/supabaseClient'; // Make sure path matches
-import ExecutionCard from '../components/ExecutionCard'; // Make sure path matches
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { supabase } from '../lib/supabaseClient'; 
+import ExecutionCard from '../components/ExecutionCard'; 
 
-// --- MOCK DATA FOR PROTOTYPING UI (Matrix & History Tabs) ---
+// --- MOCK DATA FOR MATRIX (We will wire this next) ---
 const MONTHS = ['January', 'February', 'March', 'April'];
-const CAMPAIGNS = ['Lion Dates BOGO', 'Surf Excel Endcap', 'Sprite Summer Display'];
-const STORES = ['SuperK Chittoor 1', 'SuperK Chittoor 2', 'Lakshmi Supermarket Kalyanadhurgam', 'Sidhout One Stop Store'];
-
 const MOCK_GENERAL_DATA = [
   { week: 'Week 1', execution: 82 },
   { week: 'Week 2', execution: 88 },
@@ -15,109 +12,156 @@ const MOCK_GENERAL_DATA = [
   { week: 'Week 4', execution: 76 },
 ];
 
-const MOCK_CAMPAIGN_MATRIX = STORES.map(store => ({
-  store,
-  w1: { status: Math.random() > 0.2 ? 'approved' : 'rejected', image: 'https://images.unsplash.com/photo-1604719312566-8912e9227c6a?auto=format&fit=crop&w=600&q=80' },
-  w2: { status: Math.random() > 0.3 ? 'approved' : 'rejected', image: 'https://images.unsplash.com/photo-1534723452862-4c874018d66d?auto=format&fit=crop&w=600&q=80' },
-  w3: { status: Math.random() > 0.5 ? 'in_review' : 'pending_photo', image: Math.random() > 0.5 ? 'https://images.unsplash.com/photo-1588964895597-cfccd6e2a099?auto=format&fit=crop&w=600&q=80' : null },
-  w4: { status: 'pending_photo', image: null },
-}));
-
-const MOCK_REVIEW_DATA = [
-  { id: 1, store: 'Lakshmi Supermarket Kalyanadhurgam', campaign: 'Lion Dates BOGO', date: 'Apr 15, 2026', status: 'approved', image: 'https://images.unsplash.com/photo-1604719312566-8912e9227c6a' },
-  { id: 2, store: 'Lakshmi Supermarket Kalyanadhurgam', campaign: 'Surf Excel Endcap', date: 'Apr 14, 2026', status: 'rejected', image: 'https://images.unsplash.com/photo-1534723452862-4c874018d66d' },
-  { id: 3, store: 'SuperK Chittoor 1', campaign: 'Lion Dates BOGO', date: 'Apr 14, 2026', status: 'approved', image: 'https://images.unsplash.com/photo-1588964895597-cfccd6e2a099' },
-  { id: 4, store: 'Sidhout One Stop Store', campaign: 'Sprite Summer Display', date: 'Apr 13, 2026', status: 'in_review', image: 'https://images.unsplash.com/photo-1604719312566-8912e9227c6a' },
-  { id: 5, store: 'SuperK Chittoor 2', campaign: 'Surf Excel Endcap', date: '-', status: 'pending_photo', image: null },
-];
-
-// --- MAIN COMPONENT ---
 export default function VMDashboard() {
-  const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'review'>('queue'); // Default to queue for now
+  // --- AUTHENTICATION STATE ---
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  // --- NAVIGATION STATE ---
+  const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'review' | 'settings' | 'login'>('dashboard');
   const [dashboardTab, setDashboardTab] = useState<'general' | string>('general');
+  const [settingsTab, setSettingsTab] = useState<'stores' | 'campaigns'>('stores');
   const [selectedMonth, setSelectedMonth] = useState('April');
-  
+
+  // --- LIVE SUPABASE DATA STATE ---
+  const [pendingExecutions, setPendingExecutions] = useState<any[]>([]);
+  const [allExecutions, setAllExecutions] = useState<any[]>([]); // NEW: Holds all historical data
+  const [storesList, setStoresList] = useState<any[]>([]);
+  const [campaignsList, setCampaignsList] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
   // Execution History Filters
-  const [reviewFilter, setReviewFilter] = useState<'all' | 'approved' | 'rejected' | 'in_review' | 'pending_photo'>('all');
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'approved' | 'rejected' | 'in_review'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [storeFilter, setStoreFilter] = useState('all');
   const [campaignFilter, setCampaignFilter] = useState('all');
 
-  const [selectedPhoto, setSelectedPhoto] = useState<{ store: string; week?: string; status: string; image: string } | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<{ store: string; date: string; status: string; image: string; raw_text: string } | null>(null);
 
-  // --- LIVE SUPABASE DATA STATE ---
-  const [pendingExecutions, setPendingExecutions] = useState<any[]>([]);
-  const [isLoadingQueue, setIsLoadingQueue] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
+  // New Form States
+  const [newStoreName, setNewStoreName] = useState('');
+  const [newCampName, setNewCampName] = useState('');
+  const [newCampPayout, setNewCampPayout] = useState<number | ''>('');
+  const [newCampStores, setNewCampStores] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch pending records from Supabase
-  const fetchPendingExecutions = async () => {
-    setIsLoadingQueue(true);
-    const { data, error } = await supabase
-      .from('executions')
-      .select('*')
-      .eq('status', 'pending_admin')
-      .order('submission_date', { ascending: false });
+  // --- 1. DATA FETCHING ---
+  const fetchData = async () => {
+    setIsLoading(true);
+    
+    // Fetch Queue (Pending only)
+    const { data: qData } = await supabase.from('executions').select('*').eq('status', 'pending_admin').order('submission_date', { ascending: false });
+    if (qData) setPendingExecutions(qData);
 
-    if (!error && data) {
-      setPendingExecutions(data);
-    } else if (error) {
-      console.error("Error fetching data:", error);
-    }
-    setIsLoadingQueue(false);
+    // Fetch History (Everything)
+    const { data: hData } = await supabase.from('executions').select('*').order('submission_date', { ascending: false });
+    if (hData) setAllExecutions(hData);
+
+    // Fetch Stores
+    const { data: sData } = await supabase.from('stores').select('*').order('name');
+    if (sData) setStoresList(sData);
+
+    // Fetch Campaigns
+    const { data: cData } = await supabase.from('campaigns').select('*').order('created_at', { ascending: false });
+    if (cData) setCampaignsList(cData);
+    
+    setIsLoading(false);
   };
 
-  // Run the slack sync API route
-  const handleSyncSlack = async () => {
-    setIsSyncing(true);
-    try {
-      await fetch('/api/slack-sync');
-      await fetchPendingExecutions();
-    } catch (error) {
-      console.error("Failed to sync:", error);
-    }
-    setIsSyncing(false);
-  };
-
-  // Fetch data when the component loads or when switching to the queue tab
   useEffect(() => {
-    if (mainView === 'queue') {
-      fetchPendingExecutions();
-    }
+    fetchData();
   }, [mainView]);
 
-  const renderCircle = (storeName: string, weekName: string, data: { status: string, image: string | null }) => {
-    let bgColor = 'bg-slate-200 border-2 border-slate-300 border-dashed'; 
-    if (data.status === 'approved') bgColor = 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.4)]';
-    if (data.status === 'rejected') bgColor = 'bg-red-500';
-    if (data.status === 'in_review') bgColor = 'bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.4)]'; 
-
-    return (
-      <button 
-        onClick={() => { if (data.image) setSelectedPhoto({ store: storeName, week: weekName, status: data.status, image: data.image }); }}
-        disabled={!data.image}
-        title={data.status.replace('_', ' ').toUpperCase()}
-        className={`mx-auto w-6 h-6 rounded-full flex items-center justify-center transition-transform hover:scale-125 focus:outline-none ${bgColor} ${!data.image && 'cursor-not-allowed opacity-60'}`}
-      />
-    );
+  // --- 2. AUTH LOGIC ---
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loginPassword === 'superk2026') {
+      setIsAuthenticated(true);
+      setMainView('queue');
+      setLoginError('');
+    } else setLoginError('Invalid password');
   };
 
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setMainView('dashboard');
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated && mainView !== 'dashboard' && mainView !== 'login') setMainView('dashboard');
+  }, [isAuthenticated, mainView]);
+
+  // --- 3. SETTINGS LOGIC ---
+  const handleAddSingleStore = async () => {
+    if (!newStoreName.trim()) return;
+    await supabase.from('stores').insert([{ name: newStoreName, aligned: true }]);
+    setNewStoreName(''); fetchData();
+  };
+
+  const toggleStoreAlignment = async (id: number, currentStatus: boolean) => {
+    await supabase.from('stores').update({ aligned: !currentStatus }).eq('id', id);
+    fetchData();
+  };
+
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      const rows = text.split('\n').map(row => row.trim()).filter(row => row);
+      const newStores = rows.map(name => ({ name: name.replace(/,/g, ''), aligned: true }));
+      await supabase.from('stores').insert(newStores);
+      fetchData();
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const toggleStoreInCampaign = (storeName: string) => {
+    setNewCampStores(prev => prev.includes(storeName) ? prev.filter(s => s !== storeName) : [...prev, storeName]);
+  };
+
+  const selectAllAlignedStores = () => {
+    setNewCampStores(storesList.filter(s => s.aligned).map(s => s.name));
+  };
+
+  const handleAddCampaign = async () => {
+    if (!newCampName.trim() || !newCampPayout) return;
+    await supabase.from('campaigns').insert([{ name: newCampName, payout: Number(newCampPayout), stores: newCampStores }]);
+    setNewCampName(''); setNewCampPayout(''); setNewCampStores([]); fetchData();
+  };
+
+  const handleSyncSlack = async () => {
+    setIsLoading(true);
+    await fetch('/api/slack-sync');
+    await fetchData();
+  };
+
+  // --- 4. LIVE FILTERING FOR HISTORY TABLE ---
   const filteredReviewData = useMemo(() => {
-    return MOCK_REVIEW_DATA.filter(item => {
-      const matchesStatus = reviewFilter === 'all' || item.status === reviewFilter;
-      const matchesStore = storeFilter === 'all' || item.store === storeFilter;
-      const matchesCampaign = campaignFilter === 'all' || item.campaign === campaignFilter;
-      const matchesSearch = item.store.toLowerCase().includes(searchQuery.toLowerCase()) || item.campaign.toLowerCase().includes(searchQuery.toLowerCase());
+    return allExecutions.filter(item => {
+      // Map database status to UI status
+      const mappedStatus = item.status === 'pending_admin' ? 'in_review' : item.status;
+      const finalStoreName = item.store_name || item.extracted_store || 'Unmapped Store';
       
-      return matchesStatus && matchesStore && matchesCampaign && matchesSearch;
+      const matchesStatus = reviewFilter === 'all' || mappedStatus === reviewFilter;
+      const matchesStore = storeFilter === 'all' || finalStoreName === storeFilter;
+      // Note: We will wire campaign matching in the next step, assuming 'all' for now
+      
+      const searchStr = `${finalStoreName} ${item.raw_text || ''}`.toLowerCase();
+      const matchesSearch = searchStr.includes(searchQuery.toLowerCase());
+      
+      return matchesStatus && matchesStore && matchesSearch;
     });
-  }, [reviewFilter, searchQuery, storeFilter, campaignFilter]);
+  }, [allExecutions, reviewFilter, searchQuery, storeFilter]);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans relative">
       
       {/* SIDEBAR NAVIGATION */}
-      <div className="w-full md:w-64 bg-slate-900 text-white flex flex-col z-10">
+      <div className="w-full md:w-64 bg-slate-900 text-white flex flex-col z-10 shadow-xl">
         <div className="p-6">
           <h1 className="text-xl font-black tracking-tight text-white">SuperK <span className="text-blue-400">VM</span></h1>
           <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-semibold">Command Center</p>
@@ -127,99 +171,222 @@ export default function VMDashboard() {
           <button onClick={() => setMainView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
             📊 Analytics Matrix
           </button>
-          <button onClick={() => setMainView('queue')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'queue' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-            <div className="flex items-center gap-3"><span>📋 Admin Queue</span></div>
-            {/* Live count from Supabase! */}
-            {pendingExecutions.length > 0 && (
-              <span className="bg-amber-500 text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-full">{pendingExecutions.length}</span>
-            )}
-          </button>
-          <button onClick={() => setMainView('review')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'review' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-            🗂️ Execution History
-          </button>
+          
+          {isAuthenticated ? (
+            <>
+              <button onClick={() => setMainView('queue')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'queue' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                <div className="flex items-center gap-3"><span>📋 Admin Queue</span></div>
+                {pendingExecutions.length > 0 && <span className="bg-amber-500 text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-full">{pendingExecutions.length}</span>}
+              </button>
+              <button onClick={() => setMainView('review')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'review' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                🗂️ Execution History
+              </button>
+              <button onClick={() => setMainView('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'settings' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                ⚙️ Master Settings
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setMainView('login')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all mt-8 border border-slate-700 ${mainView === 'login' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+              🔒 Admin Login
+            </button>
+          )}
         </nav>
+
+        {isAuthenticated && (
+          <div className="p-4 border-t border-slate-800">
+            <button onClick={handleLogout} className="w-full text-xs text-slate-400 hover:text-white transition-colors text-left px-4 py-2">← Logout</button>
+          </div>
+        )}
       </div>
 
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 p-8 overflow-y-auto z-0">
         
-        {/* VIEW 1: ANALYTICS DASHBOARD (Mocked) */}
-        {mainView === 'dashboard' && (
-          <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
-             {/* ... existing dashboard code ... */}
-             <div className="flex justify-between items-end mb-8">
-              <div><h2 className="text-3xl font-bold text-slate-900">Execution Overview</h2><p className="text-slate-500 mt-1">Track visual merchandising compliance across the network.</p></div>
-            </div>
-            {/* Keeping it abbreviated here so you can focus on the Queue. The rest of the dashboard code from earlier remains exactly the same! */}
-            <div className="text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">
-                (Analytics Matrix Active)
-            </div>
+        {/* LOGIN PAGE */}
+        {mainView === 'login' && (
+          <div className="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 animate-in fade-in zoom-in-95 duration-300">
+             {/* ... exact same login UI ... */}
+             <div className="text-center mb-8"><div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div><h2 className="text-2xl font-bold text-slate-900">Admin Access</h2></div>
+             <form onSubmit={handleLogin} className="space-y-4">
+              <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="Enter Password" className="w-full border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500" />
+              {loginError && <p className="text-red-500 text-sm font-semibold">{loginError}</p>}
+              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-md">Unlock Command Center</button>
+            </form>
           </div>
         )}
 
-        {/* =========================================
-            VIEW 2: ADMIN QUEUE (LIVE SUPABASE DATA)
-            ========================================= */}
+        {/* ANALYTICS DASHBOARD (Placeholder) */}
+        {mainView === 'dashboard' && (
+          <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
+             <h2 className="text-3xl font-bold text-slate-900 mb-8">Execution Overview</h2>
+             <div className="text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">(Analytics Matrix Active)</div>
+          </div>
+        )}
+
+        {/* ADMIN QUEUE */}
         {mainView === 'queue' && (
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
-            
             <div className="flex justify-between items-start mb-8">
-              <div>
-                <h2 className="text-3xl font-bold text-slate-900 mb-1">Admin Queue</h2>
-                <p className="text-slate-500">Review and map store executions from Slack</p>
-              </div>
-              
-              <button 
-                onClick={handleSyncSlack}
-                disabled={isSyncing}
-                className="flex items-center gap-2 border border-slate-200 bg-white text-slate-600 px-4 py-2 rounded-lg text-sm hover:bg-slate-50 shadow-sm disabled:opacity-50"
-              >
-                {isSyncing ? (
-                  <span className="animate-spin text-blue-600 font-bold">↻</span>
-                ) : (
-                  <span className="text-blue-600 font-bold">↻</span>
-                )}
-                {isSyncing ? 'Syncing...' : 'Sync Slack'}
+              <div><h2 className="text-3xl font-bold text-slate-900 mb-1">Admin Queue</h2><p className="text-slate-500">Review and map store executions from Slack</p></div>
+              <button onClick={handleSyncSlack} disabled={isLoading} className="flex items-center gap-2 border border-slate-200 bg-white text-slate-600 px-4 py-2 rounded-lg text-sm hover:bg-slate-50 shadow-sm disabled:opacity-50">
+                <span className={`text-blue-600 font-bold ${isLoading && 'animate-spin'}`}>↻</span> Sync Slack
               </button>
             </div>
-
-            {/* Content Area */}
-            {isLoadingQueue ? (
-              <div className="flex justify-center items-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              </div>
+            {isLoading && pendingExecutions.length === 0 ? (
+               <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>
             ) : pendingExecutions.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm flex flex-col items-center">
-                <span className="text-4xl mb-4">🎉</span>
-                <h3 className="text-lg font-bold text-slate-900">Inbox Zero!</h3>
-                <p className="text-slate-500 font-medium mt-1">There are no pending executions to review.</p>
+                <span className="text-4xl mb-4">🎉</span><h3 className="text-lg font-bold text-slate-900">Inbox Zero!</h3>
               </div>
             ) : (
               <div className="space-y-6">
                 {pendingExecutions.map((exec) => (
-                  <ExecutionCard 
-                    key={exec.id} 
-                    execution={exec} 
-                    // Pass the fetch function so the card can tell the parent to refresh when approved/rejected!
-                    onUpdate={fetchPendingExecutions} 
-                  />
+                  <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchData} />
                 ))}
               </div>
             )}
           </div>
         )}
 
-        {/* VIEW 3: EXECUTION HISTORY (Mocked) */}
+        {/* =========================================
+            EXECUTION HISTORY (LIVE SUPABASE DATA)
+            ========================================= */}
         {mainView === 'review' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
-            {/* ... existing review history code ... */}
             <div className="flex justify-between items-end mb-8">
-              <div><h2 className="text-3xl font-bold text-slate-900">Execution History</h2><p className="text-slate-500 mt-1">Search, filter, and audit past store executions.</p></div>
+              <div>
+                <h2 className="text-3xl font-bold text-slate-900">Execution History</h2>
+                <p className="text-slate-500 mt-1">Search, filter, and audit past store executions.</p>
+              </div>
             </div>
-             <div className="text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">
-                (Execution History Active)
+
+            {/* Table Controls Panel */}
+            <div className="flex flex-col gap-4 mb-6 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <div className="flex flex-col md:flex-row gap-4">
+                
+                {/* Search */}
+                <div className="flex-1 relative">
+                  <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
+                  <input 
+                    type="text" 
+                    placeholder="Search caption or store name..." 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Filter: Store (Driven by Live DB) */}
+                <div className="w-full md:w-64">
+                  <select 
+                    value={storeFilter}
+                    onChange={(e) => setStoreFilter(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">All Stores</option>
+                    {storesList.map(store => <option key={store.id} value={store.name}>{store.name}</option>)}
+                  </select>
+                </div>
+
+                {/* Filter: Campaign (Driven by Live DB) */}
+                <div className="w-full md:w-64">
+                  <select 
+                    value={campaignFilter}
+                    onChange={(e) => setCampaignFilter(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">All Campaigns</option>
+                    {campaignsList.map(camp => <option key={camp.id} value={camp.name}>{camp.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Status Toggles */}
+              <div className="flex bg-slate-100 p-1 rounded-lg w-fit">
+                {['all', 'approved', 'rejected', 'in_review'].map(status => (
+                  <button
+                    key={status}
+                    onClick={() => setReviewFilter(status as any)}
+                    className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-all ${
+                      reviewFilter === status 
+                        ? 'bg-white text-slate-900 shadow-sm' 
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* The Live Data Table */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-widest">
+                    <th className="p-4 font-semibold">Store</th>
+                    <th className="p-4 font-semibold">Slack Caption</th>
+                    <th className="p-4 font-semibold">Submission Date</th>
+                    <th className="p-4 font-semibold">Status</th>
+                    <th className="p-4 font-semibold text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredReviewData.length > 0 ? (
+                    filteredReviewData.map((row) => (
+                      <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 font-medium text-slate-800">
+                          {row.store_name || row.extracted_store || 'Unmapped Store'}
+                        </td>
+                        <td className="p-4 text-slate-500 text-sm italic max-w-xs truncate">
+                          "{row.raw_text}"
+                        </td>
+                        <td className="p-4 text-slate-600 text-sm">
+                          {new Date(row.submission_date).toLocaleDateString()}
+                        </td>
+                        <td className="p-4">
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wide
+                            ${row.status === 'approved' ? 'bg-green-100 text-green-700' : ''}
+                            ${row.status === 'rejected' ? 'bg-red-100 text-red-700' : ''}
+                            ${row.status === 'pending_admin' ? 'bg-amber-100 text-amber-700' : ''}
+                          `}>
+                            {row.status === 'pending_admin' ? 'In Review' : row.status}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right">
+                          <button 
+                            onClick={() => setSelectedPhoto({ 
+                              store: row.store_name || row.extracted_store || 'Unmapped', 
+                              status: row.status === 'pending_admin' ? 'In Review' : row.status, 
+                              image: row.image_url, 
+                              date: new Date(row.submission_date).toLocaleString(),
+                              raw_text: row.raw_text
+                            })}
+                            className="text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors"
+                          >
+                            View Details
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-slate-500">
+                        No executions found matching your filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
+        )}
+
+        {/* MASTER SETTINGS (Abbreviated to keep copy/paste clean, you already have this code!) */}
+        {mainView === 'settings' && (
+           <div className="max-w-5xl mx-auto animate-in fade-in duration-500 text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm">
+               (Master Settings Active)
+           </div>
         )}
 
       </div>
@@ -227,10 +394,29 @@ export default function VMDashboard() {
       {/* PHOTO VIEWER MODAL */}
       {selectedPhoto && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
-           {/* ... exact same modal code ... */}
+          <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-4xl w-full flex flex-col">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+              <div>
+                <h3 className="font-bold text-lg text-slate-900">{selectedPhoto.store}</h3>
+                <p className="text-sm text-slate-500 font-medium flex items-center gap-2 mt-1">
+                  {selectedPhoto.date} • 
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider 
+                    ${selectedPhoto.status === 'approved' ? 'bg-green-500' : 
+                      selectedPhoto.status === 'rejected' ? 'bg-red-500' : 'bg-amber-400 text-amber-900'}
+                  `}>
+                    {selectedPhoto.status}
+                  </span>
+                </p>
+                <p className="text-sm text-slate-700 italic mt-2">"{selectedPhoto.raw_text}"</p>
+              </div>
+              <button onClick={() => setSelectedPhoto(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-colors">✕</button>
+            </div>
+            <div className="bg-slate-100 flex items-center justify-center p-4">
+              <img src={selectedPhoto.image} alt="Execution Photo" className="max-h-[70vh] object-contain rounded border border-slate-200 shadow-sm" />
+            </div>
+          </div>
         </div>
       )}
-
     </div>
   );
 }

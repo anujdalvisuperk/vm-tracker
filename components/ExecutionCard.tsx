@@ -13,28 +13,58 @@ const REJECTION_REASONS = [
 
 // Fuzzy matching logic to guess the store name
 const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
-  if (!rawText) return '';
-  const cleanInput = rawText.toLowerCase();
+    if (!rawText) return '';
+    
+    // 1. Clean the Slack input (remove punctuation and make lowercase)
+    let cleanInput = rawText.toLowerCase().replace(/[.,!*'_]/g, ' ');
+    
+    // 2. Define "Stop Words" (Words that ruin the scoring)
+    const stopWords = ['superk', 'store', 'supermarket', 'mart', 'done', 'execution', 'photo', 'sir', 'check', 'vm'];
+    
+    // Strip stop words out of the input so we only look at unique identifying words
+    stopWords.forEach(sw => {
+       cleanInput = cleanInput.replace(new RegExp(`\\b${sw}\\b`, 'g'), ' ');
+    });
   
-  let bestMatch = '';
-  let highestScore = 0;
-
-  officialStores.forEach(store => {
-    const cleanStore = store.toLowerCase();
-    if (cleanInput.includes(cleanStore)) return store; // Exact substring match is automatic win
-    
-    // Token matching for messy Slack captions
-    const tokens = cleanStore.split(' ');
-    let score = 0;
-    tokens.forEach(t => { if(t.length > 3 && cleanInput.includes(t)) score++; });
-    
-    if (score > highestScore) {
-      highestScore = score;
-      bestMatch = store;
-    }
-  });
-  return highestScore > 0 ? bestMatch : '';
-};
+    let bestMatch = '';
+    let highestScore = 0;
+  
+    officialStores.forEach(store => {
+      const cleanStore = store.toLowerCase();
+      
+      // Check 1: Direct Substring Match (Always wins)
+      if (rawText.toLowerCase().includes(cleanStore)) {
+          bestMatch = store;
+          highestScore = 999; 
+          return;
+      }
+  
+      // Check 2: Unique Token Scoring
+      let uniqueStoreName = cleanStore;
+      // Strip "SuperK" out of the official name so we only score based on the location/identifier
+      stopWords.forEach(sw => {
+           uniqueStoreName = uniqueStoreName.replace(new RegExp(`\\b${sw}\\b`, 'g'), ' ');
+      });
+  
+      // Split into words, allowing 3-letter words (like KVR)
+      const tokens = uniqueStoreName.split(/\s+/).filter(t => t.length >= 3); 
+  
+      let score = 0;
+      tokens.forEach(t => {
+          if (cleanInput.includes(t)) {
+              // Weight longer words higher (e.g. matching "Anantapur" is worth 9 points, matching "KVR" is worth 3)
+              score += t.length; 
+          }
+      });
+  
+      if (score > highestScore && score > 0) {
+        highestScore = score;
+        bestMatch = store;
+      }
+    });
+  
+    return highestScore > 0 ? bestMatch : '';
+  };
 
 export default function ExecutionCard({ execution, onUpdate }: { execution: any, onUpdate: () => void }) {
   const [mappedStore, setMappedStore] = useState(execution.store_name || '');
@@ -57,7 +87,6 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
         const storeNames = stores.map(s => s.name);
         setOfficialStores(storeNames);
         
-        // Apply Fuzzy Logic if not already mapped
         if (!mappedStore && execution.raw_text) {
           const guess = findBestStoreMatch(execution.raw_text, storeNames);
           if (guess) setMappedStore(guess);
@@ -107,7 +136,15 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
     onUpdate();
   };
 
-  // Group campaigns for the dropdown
+  // NEW: Delete Workflow
+  const handleDelete = async () => {
+    if (confirm("Are you sure you want to permanently delete this photo? This will remove it from the database entirely.")) {
+      const { error } = await supabase.from('executions').delete().eq('id', execution.id);
+      if (!error) onUpdate();
+      else alert("Error deleting record: " + error.message);
+    }
+  };
+
   const alignedCampaigns = allCampaigns.filter(c => c.stores && c.stores.includes(mappedStore));
   const unalignedCampaigns = allCampaigns.filter(c => !c.stores || !c.stores.includes(mappedStore));
 
@@ -140,9 +177,6 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
               <datalist id={`store-options-${execution.id}`}>
                 {officialStores.map((s, i) => <option key={i} value={s} />)}
               </datalist>
-              {!officialStores.includes(mappedStore) && !isProcessed && (
-                <p className="text-[10px] text-amber-600 mt-1 font-semibold">Store name not found in official roster.</p>
-              )}
             </div>
 
             <div>
@@ -175,12 +209,16 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
         <div className="mt-4 border-t border-slate-100 pt-4">
           {!isProcessed ? (
             !isRejecting ? (
-              <div className="flex gap-3">
+              <div className="flex gap-2">
                 <button onClick={handleApprove} className="flex-1 bg-green-50 text-green-700 font-bold py-2.5 px-4 rounded-lg border border-green-200 hover:bg-green-100 transition-colors">
                   ✓ Approve & Tag
                 </button>
-                <button onClick={() => setIsRejecting(true)} className="w-32 bg-red-50 text-red-700 font-bold py-2.5 px-4 rounded-lg border border-red-200 hover:bg-red-100 transition-colors">
+                <button onClick={() => setIsRejecting(true)} className="w-28 bg-red-50 text-red-700 font-bold py-2.5 px-4 rounded-lg border border-red-200 hover:bg-red-100 transition-colors">
                   Reject
+                </button>
+                {/* Delete Button (Pending Queue) */}
+                <button onClick={handleDelete} title="Delete Permanently" className="w-12 flex items-center justify-center bg-slate-50 text-slate-500 font-bold py-2.5 rounded-lg border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors">
+                  🗑️
                 </button>
               </div>
             ) : (
@@ -202,9 +240,15 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
                 {execution.status === 'rejected' && <p className="text-sm font-bold text-red-600">❌ Rejected: <span className="font-medium text-slate-700">{execution.rejection_reason}</span></p>}
                 {execution.status === 'approved' && <p className="text-sm font-bold text-green-600">✅ Approved Successfully</p>}
               </div>
-              <button onClick={handleUndo} className="bg-slate-50 text-slate-600 font-bold py-2 px-4 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors">
-                ↺ Undo
-              </button>
+              <div className="flex gap-2">
+                <button onClick={handleUndo} className="bg-slate-50 text-slate-600 font-bold py-2 px-4 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors">
+                  ↺ Undo
+                </button>
+                {/* Delete Button (Processed View) */}
+                <button onClick={handleDelete} title="Delete Permanently" className="w-10 flex items-center justify-center bg-slate-50 text-slate-400 font-bold py-2 rounded-lg border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors">
+                  🗑️
+                </button>
+              </div>
             </div>
           )}
         </div>

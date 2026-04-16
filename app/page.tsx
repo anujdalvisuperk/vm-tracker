@@ -3,6 +3,19 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient'; 
 import ExecutionCard from '../components/ExecutionCard'; 
 
+// Helper Component for Pagination
+const Pagination = ({ total, page, setPage, perPage = 10 }: { total: number, page: number, setPage: (p: number) => void, perPage?: number }) => {
+  const maxPages = Math.ceil(total / perPage);
+  if (maxPages <= 1) return null;
+  return (
+    <div className="flex justify-between items-center mt-6 bg-slate-50 p-2 rounded-lg border border-slate-100">
+      <button disabled={page === 1} onClick={() => setPage(page - 1)} className="px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-30 hover:bg-slate-200 rounded-md transition-colors">← Previous</button>
+      <span className="text-sm font-bold text-slate-500">Page {page} of {maxPages}</span>
+      <button disabled={page === maxPages} onClick={() => setPage(page + 1)} className="px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-30 hover:bg-slate-200 rounded-md transition-colors">Next →</button>
+    </div>
+  );
+};
+
 export default function VMDashboard() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginPassword, setLoginPassword] = useState('');
@@ -23,11 +36,18 @@ export default function VMDashboard() {
   const [campaignsList, setCampaignsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // --- PAGINATION STATES ---
+  const [queuePage, setQueuePage] = useState(1);
+  const [missingPage, setMissingPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [storesPage, setStoresPage] = useState(1);
+  const [campaignsPage, setCampaignsPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
+
   const [reviewFilter, setReviewFilter] = useState<'all' | 'approved' | 'rejected' | 'in_review'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [storeFilter, setStoreFilter] = useState('all');
   const [campaignFilter, setCampaignFilter] = useState('all');
-
   const [missingCampaignFilter, setMissingCampaignFilter] = useState('all');
 
   const [selectedPhoto, setSelectedPhoto] = useState<{ store: string; date: string; status: string; image: string; raw_text: string } | null>(null);
@@ -36,9 +56,11 @@ export default function VMDashboard() {
   const [newCampName, setNewCampName] = useState('');
   const [newCampPayout, setNewCampPayout] = useState<number | ''>('');
   const [newCampStores, setNewCampStores] = useState<string[]>([]);
-  
-  // NEW: State for Linked Campaigns
   const [newCampDependencies, setNewCampDependencies] = useState<string[]>([]);
+  
+  // NEW: Campaign Date States
+  const [newCampStart, setNewCampStart] = useState('');
+  const [newCampEnd, setNewCampEnd] = useState('');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -61,37 +83,26 @@ export default function VMDashboard() {
 
   useEffect(() => { fetchData(); }, [mainView]);
 
+  // Reset pagination when switching tabs
+  useEffect(() => {
+    setQueuePage(1); setMissingPage(1); setHistoryPage(1); setStoresPage(1); setCampaignsPage(1);
+  }, [mainView, settingsTab, reviewFilter, storeFilter, campaignFilter, missingCampaignFilter, searchQuery]);
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginPassword === 'superk2026') {
-      setIsAuthenticated(true);
-      setMainView('queue');
-      setLoginError('');
-    } else setLoginError('Invalid password');
+    if (loginPassword === 'superk2026') { setIsAuthenticated(true); setMainView('queue'); setLoginError(''); } 
+    else setLoginError('Invalid password');
   };
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setMainView('dashboard');
-  };
-
-  useEffect(() => {
-    if (!isAuthenticated && mainView !== 'dashboard' && mainView !== 'login') setMainView('dashboard');
-  }, [isAuthenticated, mainView]);
+  const handleLogout = () => { setIsAuthenticated(false); setMainView('dashboard'); };
 
   const handleSyncSlack = async () => {
-    if (!syncStartDate) return alert("Please select at least a Start Date to sync from Slack.");
+    if (!syncStartDate) return alert("Please select at least a Start Date.");
     setIsLoading(true);
     try {
-      await fetch('/api/slack-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ startDate: syncStartDate, endDate: syncEndDate })
-      });
+      await fetch('/api/slack-sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ startDate: syncStartDate, endDate: syncEndDate }) });
       await fetchData();
-    } catch (error) {
-      console.error("Failed to sync:", error);
-    }
+    } catch (error) { console.error("Sync failed:", error); }
   };
 
   const handleAddSingleStore = async () => {
@@ -101,8 +112,25 @@ export default function VMDashboard() {
   };
 
   const toggleStoreAlignment = async (id: number, currentStatus: boolean) => {
-    await supabase.from('stores').update({ aligned: !currentStatus }).eq('id', id);
-    fetchData();
+    await supabase.from('stores').update({ aligned: !currentStatus }).eq('id', id); fetchData();
+  };
+
+  // NEW: Delete Store Logic
+  const handleDeleteStore = async (id: number, storeName: string) => {
+    if (confirm(`Are you sure you want to permanently delete ${storeName}?`)) {
+      await supabase.from('stores').delete().eq('id', id);
+      fetchData();
+    }
+  };
+  const handleDeleteCampaign = async (id: number, campName: string) => {
+    if (confirm(`Are you sure you want to permanently delete the "${campName}" campaign?`)) {
+      const { error } = await supabase.from('campaigns').delete().eq('id', id);
+      if (error) {
+        alert("Error deleting campaign: " + error.message);
+      } else {
+        fetchData();
+      }
+    }
   };
 
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -123,26 +151,21 @@ export default function VMDashboard() {
   const toggleStoreInCampaign = (storeName: string) => {
     setNewCampStores(prev => prev.includes(storeName) ? prev.filter(s => s !== storeName) : [...prev, storeName]);
   };
-
   const toggleDependency = (campName: string) => {
     setNewCampDependencies(prev => prev.includes(campName) ? prev.filter(c => c !== campName) : [...prev, campName]);
   };
-
-  const selectAllAlignedStores = () => {
-    setNewCampStores(storesList.filter(s => s.aligned).map(s => s.name));
-  };
+  const selectAllAlignedStores = () => setNewCampStores(storesList.filter(s => s.aligned).map(s => s.name));
 
   const handleAddCampaign = async () => {
-    if (!newCampName.trim() || !newCampPayout) return;
+    if (!newCampName.trim() || !newCampPayout || !newCampStart || !newCampEnd) return alert("Please fill all required campaign fields including dates.");
     await supabase.from('campaigns').insert([{ 
-      name: newCampName, 
-      payout: Number(newCampPayout), 
-      stores: newCampStores,
-      dependencies: newCampDependencies 
+      name: newCampName, payout: Number(newCampPayout), stores: newCampStores, dependencies: newCampDependencies,
+      start_date: newCampStart, end_date: newCampEnd
     }]);
-    setNewCampName(''); setNewCampPayout(''); setNewCampStores([]); setNewCampDependencies([]); fetchData();
+    setNewCampName(''); setNewCampPayout(''); setNewCampStores([]); setNewCampDependencies([]); setNewCampStart(''); setNewCampEnd(''); fetchData();
   };
 
+  // Derived filtered arrays for Pagination
   const filteredReviewData = useMemo(() => {
     return allExecutions.filter(item => {
       const mappedStatus = item.status === 'pending_admin' ? 'in_review' : item.status;
@@ -152,7 +175,6 @@ export default function VMDashboard() {
       const matchesStatus = reviewFilter === 'all' || mappedStatus === reviewFilter;
       const matchesStore = storeFilter === 'all' || finalStoreName === storeFilter;
       const matchesCampaign = campaignFilter === 'all' || campName === campaignFilter;
-      
       const searchStr = `${finalStoreName} ${item.raw_text || ''} ${campName}`.toLowerCase();
       const matchesSearch = searchStr.includes(searchQuery.toLowerCase());
       
@@ -182,18 +204,21 @@ export default function VMDashboard() {
     return missing;
   }, [campaignsList, allExecutions, missingCampaignFilter, missingStartDate, missingEndDate]);
 
-  // --- UPGRADED CSV EXPORT (Handles Linked Campaign Logic) ---
+  // PAGINATION SLICING
+  const paginatedQueue = pendingExecutions.slice((queuePage - 1) * ITEMS_PER_PAGE, queuePage * ITEMS_PER_PAGE);
+  const paginatedMissing = missingExecutions.slice((missingPage - 1) * ITEMS_PER_PAGE, missingPage * ITEMS_PER_PAGE);
+  const paginatedHistory = filteredReviewData.slice((historyPage - 1) * ITEMS_PER_PAGE, historyPage * ITEMS_PER_PAGE);
+  const paginatedStores = storesList.slice((storesPage - 1) * ITEMS_PER_PAGE, storesPage * ITEMS_PER_PAGE);
+  const paginatedCampaigns = campaignsList.slice((campaignsPage - 1) * ITEMS_PER_PAGE, campaignsPage * ITEMS_PER_PAGE);
+
+
+  // --- UPGRADED CSV EXPORT (Fixes the Space/Column Splitting Bug) ---
   const exportMatrixToCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Campaign Name,Store Name,Week 1,Week 2,Week 3,Week 4,Total Payout\n";
+    // 1. Wrap headers in quotes to prevent space-splitting
+    let csvContent = '"Campaign Name","Store Name","Week 1","Week 2","Week 3","Week 4","Total Payout"\n';
 
-    // Helper: Determine execution status for a specific store, campaign, and week
     const getWeekStatusForCamp = (storeName: string, campName: string, weekNum: number) => {
-      const storeExecs = allExecutions.filter(e => 
-        (e.store_name === storeName || e.extracted_store === storeName) && 
-        e.campaign_name === campName
-      );
-
+      const storeExecs = allExecutions.filter(e => (e.store_name === storeName || e.extracted_store === storeName) && e.campaign_name === campName);
       const execForWeek = storeExecs.find(e => {
         const day = new Date(e.submission_date).getDate();
         if (weekNum === 1 && day >= 1 && day <= 7) return true;
@@ -202,7 +227,6 @@ export default function VMDashboard() {
         if (weekNum === 4 && day >= 22) return true;
         return false;
       });
-
       if (!execForWeek) return "Missed";
       if (execForWeek.status === 'approved') return "Approved";
       if (execForWeek.status === 'rejected') return "Rejected";
@@ -211,56 +235,45 @@ export default function VMDashboard() {
 
     campaignsList.forEach(camp => {
       if (!camp.stores) return;
-
       camp.stores.forEach((storeName: string) => {
         const w1 = getWeekStatusForCamp(storeName, camp.name, 1);
         const w2 = getWeekStatusForCamp(storeName, camp.name, 2);
         const w3 = getWeekStatusForCamp(storeName, camp.name, 3);
         const w4 = getWeekStatusForCamp(storeName, camp.name, 4);
 
-        // Check dependencies for payout
         let approvedCount = 0;
         const weeks = [w1, w2, w3, w4];
         
         weeks.forEach((status, index) => {
           const weekNum = index + 1;
           if (status === 'Approved') {
-            // Assume it's valid, unless a dependency fails
             let depsSatisfied = true;
-            
             const deps = camp.dependencies || [];
             deps.forEach((depCampName: string) => {
-              // If the required linked campaign wasn't approved this week, dependencies fail
-              if (getWeekStatusForCamp(storeName, depCampName, weekNum) !== 'Approved') {
-                depsSatisfied = false;
-              }
+              if (getWeekStatusForCamp(storeName, depCampName, weekNum) !== 'Approved') depsSatisfied = false;
             });
-
-            if (depsSatisfied) {
-              approvedCount++;
-            }
+            if (depsSatisfied) approvedCount++;
           }
         });
 
         const totalPayout = approvedCount * (camp.payout || 0);
-
-        const safeCampName = `"${camp.name}"`;
-        const safeStoreName = `"${storeName}"`;
-
-        const row = `${safeCampName},${safeStoreName},${w1},${w2},${w3},${w4},${totalPayout}`;
-        csvContent += row + "\n";
+        
+        // 2. Wrap all row values in quotes to be perfectly safe
+        csvContent += `"${camp.name}","${storeName}","${w1}","${w2}","${w3}","${w4}","${totalPayout}"\n`;
       });
     });
 
-    const encodedUri = encodeURI(csvContent);
+    // 3. Use a Blob with BOM (\uFEFF) to force Excel/Numbers to parse properly
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", url);
     link.setAttribute("download", `SuperK_VM_Analytics_${selectedMonth}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url); // Clean up memory
   };
-
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans relative">
@@ -273,9 +286,7 @@ export default function VMDashboard() {
         </div>
         
         <nav className="flex-1 px-4 space-y-2 mt-4">
-          <button onClick={() => setMainView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-            📊 Analytics Matrix
-          </button>
+          <button onClick={() => setMainView('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>📊 Analytics Matrix</button>
           
           {isAuthenticated ? (
             <>
@@ -283,37 +294,24 @@ export default function VMDashboard() {
                 <div className="flex items-center gap-3"><span>📋 Admin Queue</span></div>
                 {pendingExecutions.length > 0 && <span className="bg-amber-500 text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-full">{pendingExecutions.length}</span>}
               </button>
-
               <button onClick={() => setMainView('missing')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'missing' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
                 <div className="flex items-center gap-3"><span>⚠️ Missing Photos</span></div>
-                {missingExecutions.length > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{missingExecutions.length}</span>}
               </button>
-
-              <button onClick={() => setMainView('review')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'review' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-                🗂️ Execution History
-              </button>
-              <button onClick={() => setMainView('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'settings' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-                ⚙️ Master Settings
-              </button>
+              <button onClick={() => setMainView('review')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'review' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>🗂️ Execution History</button>
+              <button onClick={() => setMainView('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'settings' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>⚙️ Master Settings</button>
             </>
           ) : (
-            <button onClick={() => setMainView('login')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all mt-8 border border-slate-700 ${mainView === 'login' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-              🔒 Admin Login
-            </button>
+            <button onClick={() => setMainView('login')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all mt-8 border border-slate-700 ${mainView === 'login' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>🔒 Admin Login</button>
           )}
         </nav>
 
-        {isAuthenticated && (
-          <div className="p-4 border-t border-slate-800">
-            <button onClick={handleLogout} className="w-full text-xs text-slate-400 hover:text-white transition-colors text-left px-4 py-2">← Logout</button>
-          </div>
-        )}
+        {isAuthenticated && <div className="p-4 border-t border-slate-800"><button onClick={handleLogout} className="w-full text-xs text-slate-400 hover:text-white transition-colors text-left px-4 py-2">← Logout</button></div>}
       </div>
 
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 p-8 overflow-y-auto z-0">
         
-        {/* VIEW: LOGIN PAGE */}
+        {/* LOGIN PAGE */}
         {mainView === 'login' && (
           <div className="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 animate-in fade-in zoom-in-95 duration-300">
              <div className="text-center mb-8"><div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div><h2 className="text-2xl font-bold text-slate-900">Admin Access</h2></div>
@@ -325,47 +323,29 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* VIEW: ANALYTICS DASHBOARD */}
+        {/* ANALYTICS DASHBOARD */}
         {mainView === 'dashboard' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
              <div className="flex justify-between items-end mb-8">
-              <div>
-                <h2 className="text-3xl font-bold text-slate-900">Execution Overview</h2>
-                <p className="text-slate-500 mt-1">Track visual merchandising compliance across the network.</p>
-              </div>
-              <button onClick={exportMatrixToCSV} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm flex items-center gap-2">
-                ⬇️ Download CSV
-              </button>
+              <div><h2 className="text-3xl font-bold text-slate-900">Execution Overview</h2><p className="text-slate-500 mt-1">Track visual merchandising compliance across the network.</p></div>
+              <button onClick={exportMatrixToCSV} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm flex items-center gap-2">⬇️ Download CSV</button>
             </div>
             <div className="text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm flex flex-col items-center">
-                <span className="text-4xl mb-4">📊</span>
-                <h3 className="text-lg font-bold text-slate-900 mb-2">Live Analytics Matrix Active</h3>
+                <span className="text-4xl mb-4">📊</span><h3 className="text-lg font-bold text-slate-900 mb-2">Live Analytics Matrix Active</h3>
                 <p>Click &quot;Download CSV&quot; above to instantly generate the finance payout report based on historical data.</p>
             </div>
           </div>
         )}
 
-        {/* VIEW: ADMIN QUEUE */}
+        {/* ADMIN QUEUE */}
         {mainView === 'queue' && (
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
-              <div>
-                <h2 className="text-3xl font-bold text-slate-900 mb-1">Admin Queue</h2>
-                <p className="text-slate-500">Review and map store executions from Slack</p>
-              </div>
-              
+              <div><h2 className="text-3xl font-bold text-slate-900 mb-1">Admin Queue</h2><p className="text-slate-500">Review and map store executions from Slack</p></div>
               <div className="flex items-end gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Start Date *</label>
-                  <input type="date" value={syncStartDate} onChange={(e) => setSyncStartDate(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">End Date</label>
-                  <input type="date" value={syncEndDate} onChange={(e) => setSyncEndDate(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-                <button onClick={handleSyncSlack} disabled={isLoading} className="flex items-center gap-2 bg-blue-50 text-blue-700 border border-blue-200 px-4 py-1.5 rounded-lg text-sm font-bold hover:bg-blue-100 shadow-sm disabled:opacity-50 h-[34px] transition-colors">
-                  <span className={`${isLoading && 'animate-spin'}`}>↻</span> Pull
-                </button>
+                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Start Date *</label><input type="date" value={syncStartDate} onChange={(e) => setSyncStartDate(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">End Date</label><input type="date" value={syncEndDate} onChange={(e) => setSyncEndDate(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+                <button onClick={handleSyncSlack} disabled={isLoading} className="flex items-center gap-2 bg-blue-50 text-blue-700 border border-blue-200 px-4 py-1.5 rounded-lg text-sm font-bold hover:bg-blue-100 shadow-sm disabled:opacity-50 h-[34px]"><span className={`${isLoading && 'animate-spin'}`}>↻</span> Pull</button>
               </div>
             </div>
 
@@ -377,41 +357,33 @@ export default function VMDashboard() {
                 <p className="text-slate-500 mt-2 text-sm">There are no pending executions to review.</p>
               </div>
             ) : (
-              <div className="space-y-6">
-                {pendingExecutions.map((exec) => (
-                  <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchData} />
-                ))}
+              <div>
+                <div className="space-y-6">
+                  {paginatedQueue.map((exec) => <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchData} />)}
+                </div>
+                <Pagination total={pendingExecutions.length} page={queuePage} setPage={setQueuePage} />
               </div>
             )}
           </div>
         )}
 
-        {/* VIEW: MISSING PHOTOS */}
+        {/* MISSING PHOTOS */}
         {mainView === 'missing' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
             <div className="flex justify-between items-end mb-8">
-              <div>
-                <h2 className="text-3xl font-bold text-slate-900 mb-1">Missing Photos</h2>
-                <p className="text-slate-500">Stores enrolled in campaigns that have not submitted a photo in the selected timeframe.</p>
-              </div>
+              <div><h2 className="text-3xl font-bold text-slate-900 mb-1">Missing Photos</h2><p className="text-slate-500">Stores enrolled in campaigns that have not submitted a photo.</p></div>
             </div>
 
             <div className="mb-6 bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-end gap-4">
               <div className="flex-1 min-w-[200px]">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Filter by Campaign</label>
-                <select value={missingCampaignFilter} onChange={(e) => setMissingCampaignFilter(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <select value={missingCampaignFilter} onChange={(e) => setMissingCampaignFilter(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
                   <option value="all">All Active Campaigns</option>
                   {campaignsList.map(camp => <option key={camp.id} value={camp.name}>{camp.name}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Start Date</label>
-                <input type="date" value={missingStartDate} onChange={(e) => setMissingStartDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">End Date</label>
-                <input type="date" value={missingEndDate} onChange={(e) => setMissingEndDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
-              </div>
+              <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Start Date</label><input type="date" value={missingStartDate} onChange={(e) => setMissingStartDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+              <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">End Date</label><input type="date" value={missingEndDate} onChange={(e) => setMissingEndDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
             </div>
 
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -425,7 +397,7 @@ export default function VMDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {missingExecutions.length > 0 ? (
-                    missingExecutions.map((row, i) => (
+                    paginatedMissing.map((row, i) => (
                       <tr key={i} className="hover:bg-red-50 transition-colors">
                         <td className="p-4 font-bold text-slate-800">{row.store}</td>
                         <td className="p-4 text-slate-600 font-medium"><span className="inline-block w-2 h-2 rounded-full bg-red-400 mr-2 animate-pulse"></span>{row.campaign}</td>
@@ -433,50 +405,41 @@ export default function VMDashboard() {
                       </tr>
                     ))
                   ) : (
-                    <tr>
-                      <td colSpan={3} className="p-12 text-center">
-                        <span className="text-4xl block mb-4">🏆</span>
-                        <h3 className="text-lg font-bold text-slate-900">100% Compliance!</h3>
-                        <p className="text-slate-500 mt-1">Every enrolled store has submitted their photos for the selected timeframe.</p>
-                      </td>
-                    </tr>
+                    <tr><td colSpan={3} className="p-12 text-center"><span className="text-4xl block mb-4">🏆</span><h3 className="text-lg font-bold text-slate-900">100% Compliance!</h3></td></tr>
                   )}
                 </tbody>
               </table>
+              {missingExecutions.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={missingExecutions.length} page={missingPage} setPage={setMissingPage} /></div>}
             </div>
           </div>
         )}
 
-        {/* VIEW: EXECUTION HISTORY */}
+        {/* EXECUTION HISTORY */}
         {mainView === 'review' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
             <div className="flex justify-between items-end mb-8">
-              <div>
-                <h2 className="text-3xl font-bold text-slate-900">Execution History</h2>
-                <p className="text-slate-500 mt-1">Search, filter, and audit past store executions.</p>
-              </div>
+              <div><h2 className="text-3xl font-bold text-slate-900">Execution History</h2><p className="text-slate-500 mt-1">Search, filter, and audit past store executions.</p></div>
             </div>
 
             <div className="flex flex-col gap-4 mb-6 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
               <div className="flex flex-col md:flex-row gap-4">
                 <div className="flex-1 relative">
                   <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
-                  <input type="text" placeholder="Search caption or store name..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="text" placeholder="Search caption or store name..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <div className="w-full md:w-64">
-                  <select value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <select value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
                     <option value="all">All Stores</option>
                     {storesList.map(store => <option key={store.id} value={store.name}>{store.name}</option>)}
                   </select>
                 </div>
                 <div className="w-full md:w-64">
-                  <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
                     <option value="all">All Campaigns</option>
                     {campaignsList.map(camp => <option key={camp.id} value={camp.name}>{camp.name}</option>)}
                   </select>
                 </div>
               </div>
-
               <div className="flex bg-slate-100 p-1 rounded-lg w-fit">
                 {['all', 'approved', 'rejected', 'in_review'].map(status => (
                   <button key={status} onClick={() => setReviewFilter(status as any)} className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-all ${reviewFilter === status ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
@@ -500,25 +463,19 @@ export default function VMDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredReviewData.length > 0 ? (
-                    filteredReviewData.map((row) => (
+                    paginatedHistory.map((row) => (
                       <tr key={row.id} className="hover:bg-slate-50 transition-colors">
                         <td className="p-4 font-medium text-slate-800">{row.store_name || row.extracted_store || 'Unmapped Store'}</td>
                         <td className="p-4 text-slate-500 text-sm italic max-w-[200px] truncate">&quot;{row.raw_text}&quot;</td>
                         <td className="p-4 text-slate-600 text-sm font-medium">{row.campaign_name || '—'}</td>
                         <td className="p-4 text-slate-600 text-sm">{new Date(row.submission_date).toLocaleDateString()}</td>
                         <td className="p-4">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wide
-                            ${row.status === 'approved' ? 'bg-green-100 text-green-700' : ''}
-                            ${row.status === 'rejected' ? 'bg-red-100 text-red-700' : ''}
-                            ${row.status === 'pending_admin' ? 'bg-amber-100 text-amber-700' : ''}
-                          `}>
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wide ${row.status === 'approved' ? 'bg-green-100 text-green-700' : ''} ${row.status === 'rejected' ? 'bg-red-100 text-red-700' : ''} ${row.status === 'pending_admin' ? 'bg-amber-100 text-amber-700' : ''}`}>
                             {row.status === 'pending_admin' ? 'In Review' : row.status}
                           </span>
                         </td>
                         <td className="p-4 text-right">
-                          <button onClick={() => setSelectedPhoto({ store: row.store_name || row.extracted_store || 'Unmapped', status: row.status === 'pending_admin' ? 'In Review' : row.status, image: row.image_url, date: new Date(row.submission_date).toLocaleString(), raw_text: row.raw_text })} className="text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors">
-                            View
-                          </button>
+                          <button onClick={() => setSelectedPhoto({ store: row.store_name || row.extracted_store || 'Unmapped', status: row.status === 'pending_admin' ? 'In Review' : row.status, image: row.image_url, date: new Date(row.submission_date).toLocaleString(), raw_text: row.raw_text })} className="text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors">View</button>
                         </td>
                       </tr>
                     ))
@@ -527,11 +484,12 @@ export default function VMDashboard() {
                   )}
                 </tbody>
               </table>
+              {filteredReviewData.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={filteredReviewData.length} page={historyPage} setPage={setHistoryPage} /></div>}
             </div>
           </div>
         )}
 
-        {/* VIEW: MASTER SETTINGS */}
+        {/* MASTER SETTINGS */}
         {mainView === 'settings' && (
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
             <div className="mb-8"><h2 className="text-3xl font-bold text-slate-900">Master Settings</h2><p className="text-slate-500 mt-1">Manage Store Roster and Active Campaigns.</p></div>
@@ -567,23 +525,27 @@ export default function VMDashboard() {
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-widest">
                         <th className="p-4 font-semibold">Store Name</th>
-                        <th className="p-4 font-semibold text-right">Alignment Status</th>
+                        <th className="p-4 font-semibold text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {storesList.length === 0 && <tr><td colSpan={2} className="p-8 text-center text-slate-500">No stores configured. Add some above!</td></tr>}
-                      {storesList.map(store => (
+                      {paginatedStores.map(store => (
                         <tr key={store.id} className="hover:bg-slate-50">
                           <td className="p-4 font-medium text-slate-800">{store.name}</td>
-                          <td className="p-4 text-right">
-                            <button onClick={() => toggleStoreAlignment(store.id, store.aligned)} className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition-colors border ${store.aligned ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'}`}>
+                          <td className="p-4 text-right flex justify-end gap-2">
+                            <button onClick={() => toggleStoreAlignment(store.id, store.aligned)} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors border ${store.aligned ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'}`}>
                               {store.aligned ? '✓ Aligned' : '✕ Not Aligned'}
+                            </button>
+                            <button onClick={() => handleDeleteStore(store.id, store.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors">
+                              🗑️ Delete
                             </button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  {storesList.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={storesList.length} page={storesPage} setPage={setStoresPage} /></div>}
                 </div>
               </div>
             )}
@@ -591,17 +553,24 @@ export default function VMDashboard() {
             {/* TAB: CAMPAIGNS */}
             {settingsTab === 'campaigns' && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                
+                {/* Create Campaign Form */}
                 <div className="md:col-span-1 bg-white p-6 border border-slate-200 rounded-xl shadow-sm h-fit">
                   <h3 className="text-lg font-bold text-slate-900 mb-6 border-b border-slate-100 pb-2">Create Campaign</h3>
                   <div className="space-y-4">
                     <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Campaign Name</label><input type="text" value={newCampName} onChange={(e) => setNewCampName(e.target.value)} placeholder="e.g. Veeba Ketchup" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
                     <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Weekly Payout (₹)</label><input type="number" value={newCampPayout} onChange={(e) => setNewCampPayout(Number(e.target.value))} placeholder="500" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
                     
-                    {/* NEW: Co-Campaign Dependencies */}
+                    {/* NEW: Date Range Inputs */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Start Date</label><input type="date" value={newCampStart} onChange={(e) => setNewCampStart(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+                      <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">End Date</label><input type="date" value={newCampEnd} onChange={(e) => setNewCampEnd(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+                    </div>
+
                     {campaignsList.length > 0 && (
                       <div className="pt-2 border-t border-slate-100">
-                        <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Required Co-Campaigns</label>
-                        <p className="text-[10px] text-slate-500 mb-2">If linked, payout requires both campaigns to be approved.</p>
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">🔗 Required Co-Campaigns</label>
+                        <p className="text-[10px] text-slate-500 mb-2">Payout requires both campaigns to be approved.</p>
                         <div className="max-h-24 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 space-y-1">
                            {campaignsList.map(camp => (
                              <label key={camp.id} className="flex items-center gap-2 p-1 hover:bg-white rounded cursor-pointer text-sm transition-colors">
@@ -634,27 +603,52 @@ export default function VMDashboard() {
 
                 <div className="md:col-span-2 space-y-4">
                   {campaignsList.length === 0 && <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-500">No campaigns created yet.</div>}
-                  {campaignsList.map(campaign => (
-                    <div key={campaign.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
-                      <div className="flex justify-between items-start mb-4">
+                  {paginatedCampaigns.map(campaign => (
+                    <div key={campaign.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden">
+                      
+                      {/* Live Status Indicator */}
+                      {campaign.end_date && new Date(campaign.end_date) < new Date() ? (
+                        <div className="absolute top-0 right-0 bg-slate-200 text-slate-600 text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-widest">Expired</div>
+                      ) : (
+                        <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-widest shadow-sm">Live Now</div>
+                      )}
+
+                      <div className="flex justify-between items-start mb-4 mt-2">
                         <div>
                           <h4 className="text-lg font-bold text-slate-900">{campaign.name}</h4>
                           <p className="text-sm font-semibold text-green-600 mt-1">₹{campaign.payout} / week</p>
+                          <p className="text-xs text-slate-500 mt-1 mb-2">
+                            {campaign.start_date ? new Date(campaign.start_date).toLocaleDateString() : 'N/A'} - {campaign.end_date ? new Date(campaign.end_date).toLocaleDateString() : 'Ongoing'}
+                          </p>
+                          
+                          {/* Emphasized Linked Badge */}
                           {campaign.dependencies && campaign.dependencies.length > 0 && (
-                            <p className="text-xs font-semibold text-amber-600 mt-1 bg-amber-50 inline-block px-2 py-0.5 rounded border border-amber-200">
-                              Requires: {campaign.dependencies.join(', ')}
+                            <p className="text-xs font-bold text-amber-700 mt-1 bg-amber-100 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-amber-300 shadow-sm">
+                              <span>🔗</span> Linked Required: {campaign.dependencies.join(', ')}
                             </p>
                           )}
                         </div>
-                        <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1 rounded-full">{campaign.stores?.length || 0} Stores Enrolled</span>
+                        <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1 rounded-full border border-blue-100">{campaign.stores?.length || 0} Stores</span>
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 max-h-24 overflow-y-auto flex flex-wrap gap-2">
+                      
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 max-h-24 overflow-y-auto flex flex-wrap gap-2 mb-4">
                         {campaign.stores?.map((s: string, i: number) => (
                           <span key={i} className="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-1 rounded shadow-sm">{s}</span>
                         ))}
                       </div>
+
+                      {/* NEW: Delete Button Footer */}
+                      <div className="pt-4 border-t border-slate-100 flex justify-end">
+                        <button 
+                          onClick={() => handleDeleteCampaign(campaign.id, campaign.name)} 
+                          className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-2"
+                        >
+                          🗑️ Delete Campaign
+                        </button>
+                      </div>
                     </div>
                   ))}
+                  {campaignsList.length > 0 && <Pagination total={campaignsList.length} page={campaignsPage} setPage={setCampaignsPage} />}
                 </div>
               </div>
             )}
@@ -672,12 +666,7 @@ export default function VMDashboard() {
                 <h3 className="font-bold text-lg text-slate-900">{selectedPhoto.store}</h3>
                 <p className="text-sm text-slate-500 font-medium flex items-center gap-2 mt-1">
                   {selectedPhoto.date} • 
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider 
-                    ${selectedPhoto.status === 'approved' ? 'bg-green-500' : 
-                      selectedPhoto.status === 'rejected' ? 'bg-red-500' : 'bg-amber-400 text-amber-900'}
-                  `}>
-                    {selectedPhoto.status}
-                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider ${selectedPhoto.status === 'approved' ? 'bg-green-500' : selectedPhoto.status === 'rejected' ? 'bg-red-500' : 'bg-amber-400 text-amber-900'}`}>{selectedPhoto.status}</span>
                 </p>
                 <p className="text-sm text-slate-700 italic mt-2">&quot;{selectedPhoto.raw_text}&quot;</p>
               </div>

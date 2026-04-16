@@ -52,16 +52,20 @@ export default function VMDashboard() {
 
   const [selectedPhoto, setSelectedPhoto] = useState<{ store: string; date: string; status: string; image: string; raw_text: string } | null>(null);
 
+  // --- SETTINGS CREATION STATES ---
   const [newStoreName, setNewStoreName] = useState('');
   const [newCampName, setNewCampName] = useState('');
   const [newCampPayout, setNewCampPayout] = useState<number | ''>('');
   const [newCampStores, setNewCampStores] = useState<string[]>([]);
   const [newCampDependencies, setNewCampDependencies] = useState<string[]>([]);
-  
-  // NEW: Campaign Date States
   const [newCampStart, setNewCampStart] = useState('');
   const [newCampEnd, setNewCampEnd] = useState('');
   
+  // --- EDITING STATES ---
+  const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
+  const [editingStoreName, setEditingStoreName] = useState('');
+  const [editingCampaign, setEditingCampaign] = useState<any | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchData = async () => {
@@ -83,7 +87,6 @@ export default function VMDashboard() {
 
   useEffect(() => { fetchData(); }, [mainView]);
 
-  // Reset pagination when switching tabs
   useEffect(() => {
     setQueuePage(1); setMissingPage(1); setHistoryPage(1); setStoresPage(1); setCampaignsPage(1);
   }, [mainView, settingsTab, reviewFilter, storeFilter, campaignFilter, missingCampaignFilter, searchQuery]);
@@ -105,6 +108,7 @@ export default function VMDashboard() {
     } catch (error) { console.error("Sync failed:", error); }
   };
 
+  // --- STORE ACTIONS ---
   const handleAddSingleStore = async () => {
     if (!newStoreName.trim()) return;
     await supabase.from('stores').insert([{ name: newStoreName, aligned: true }]);
@@ -115,22 +119,31 @@ export default function VMDashboard() {
     await supabase.from('stores').update({ aligned: !currentStatus }).eq('id', id); fetchData();
   };
 
-  // NEW: Delete Store Logic
   const handleDeleteStore = async (id: number, storeName: string) => {
     if (confirm(`Are you sure you want to permanently delete ${storeName}?`)) {
       await supabase.from('stores').delete().eq('id', id);
       fetchData();
     }
   };
-  const handleDeleteCampaign = async (id: number, campName: string) => {
-    if (confirm(`Are you sure you want to permanently delete the "${campName}" campaign?`)) {
-      const { error } = await supabase.from('campaigns').delete().eq('id', id);
-      if (error) {
-        alert("Error deleting campaign: " + error.message);
-      } else {
-        fetchData();
-      }
+
+  const startEditStore = (store: any) => {
+    setEditingStoreId(store.id);
+    setEditingStoreName(store.name);
+  };
+
+  const saveEditStore = async (id: number, oldName: string) => {
+    if (!editingStoreName.trim()) return setEditingStoreId(null);
+    
+    // 1. Update the Store record
+    await supabase.from('stores').update({ name: editingStoreName }).eq('id', id);
+    
+    // 2. Cascade the name change to execution history
+    if (editingStoreName !== oldName) {
+      await supabase.from('executions').update({ store_name: editingStoreName }).eq('store_name', oldName);
     }
+    
+    setEditingStoreId(null);
+    fetchData();
   };
 
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -148,13 +161,35 @@ export default function VMDashboard() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const toggleStoreInCampaign = (storeName: string) => {
-    setNewCampStores(prev => prev.includes(storeName) ? prev.filter(s => s !== storeName) : [...prev, storeName]);
+  // --- CAMPAIGN ACTIONS ---
+  const toggleStoreInCampaign = (storeName: string, isEditing = false) => {
+    if (isEditing && editingCampaign) {
+      const stores = editingCampaign.stores || [];
+      const newStores = stores.includes(storeName) ? stores.filter((s: string) => s !== storeName) : [...stores, storeName];
+      setEditingCampaign({ ...editingCampaign, stores: newStores });
+    } else {
+      setNewCampStores(prev => prev.includes(storeName) ? prev.filter(s => s !== storeName) : [...prev, storeName]);
+    }
   };
-  const toggleDependency = (campName: string) => {
-    setNewCampDependencies(prev => prev.includes(campName) ? prev.filter(c => c !== campName) : [...prev, campName]);
+
+  const toggleDependency = (campName: string, isEditing = false) => {
+    if (isEditing && editingCampaign) {
+      const deps = editingCampaign.dependencies || [];
+      const newDeps = deps.includes(campName) ? deps.filter((c: string) => c !== campName) : [...deps, campName];
+      setEditingCampaign({ ...editingCampaign, dependencies: newDeps });
+    } else {
+      setNewCampDependencies(prev => prev.includes(campName) ? prev.filter(c => c !== campName) : [...prev, campName]);
+    }
   };
-  const selectAllAlignedStores = () => setNewCampStores(storesList.filter(s => s.aligned).map(s => s.name));
+
+  const selectAllAlignedStores = (isEditing = false) => {
+    const alignedNames = storesList.filter(s => s.aligned).map(s => s.name);
+    if (isEditing && editingCampaign) {
+      setEditingCampaign({ ...editingCampaign, stores: alignedNames });
+    } else {
+      setNewCampStores(alignedNames);
+    }
+  };
 
   const handleAddCampaign = async () => {
     if (!newCampName.trim() || !newCampPayout || !newCampStart || !newCampEnd) return alert("Please fill all required campaign fields including dates.");
@@ -165,7 +200,39 @@ export default function VMDashboard() {
     setNewCampName(''); setNewCampPayout(''); setNewCampStores([]); setNewCampDependencies([]); setNewCampStart(''); setNewCampEnd(''); fetchData();
   };
 
-  // Derived filtered arrays for Pagination
+  const handleDeleteCampaign = async (id: number, campName: string) => {
+    if (confirm(`Are you sure you want to permanently delete the "${campName}" campaign?`)) {
+      await supabase.from('campaigns').delete().eq('id', id);
+      fetchData();
+    }
+  };
+
+  const saveEditCampaign = async () => {
+    if (!editingCampaign.name.trim() || !editingCampaign.payout || !editingCampaign.start_date || !editingCampaign.end_date) {
+      return alert("Please ensure all fields are filled out.");
+    }
+    
+    await supabase.from('campaigns').update({
+      name: editingCampaign.name,
+      payout: Number(editingCampaign.payout),
+      start_date: editingCampaign.start_date,
+      end_date: editingCampaign.end_date,
+      stores: editingCampaign.stores || [],
+      dependencies: editingCampaign.dependencies || []
+    }).eq('id', editingCampaign.id);
+    
+    setEditingCampaign(null);
+    fetchData();
+  };
+
+
+  // --- LIVE METRICS CALCULATION ---
+  const totalStoresCount = storesList.length;
+  const alignedStoresCount = storesList.filter(s => s.aligned).length;
+  const unalignedStoresCount = totalStoresCount - alignedStoresCount;
+  const alignedPercentage = totalStoresCount > 0 ? Math.round((alignedStoresCount / totalStoresCount) * 100) : 0;
+
+  // --- FILTERING & SLICING ---
   const filteredReviewData = useMemo(() => {
     return allExecutions.filter(item => {
       const mappedStatus = item.status === 'pending_admin' ? 'in_review' : item.status;
@@ -204,21 +271,21 @@ export default function VMDashboard() {
     return missing;
   }, [campaignsList, allExecutions, missingCampaignFilter, missingStartDate, missingEndDate]);
 
-  // PAGINATION SLICING
   const paginatedQueue = pendingExecutions.slice((queuePage - 1) * ITEMS_PER_PAGE, queuePage * ITEMS_PER_PAGE);
   const paginatedMissing = missingExecutions.slice((missingPage - 1) * ITEMS_PER_PAGE, missingPage * ITEMS_PER_PAGE);
   const paginatedHistory = filteredReviewData.slice((historyPage - 1) * ITEMS_PER_PAGE, historyPage * ITEMS_PER_PAGE);
   const paginatedStores = storesList.slice((storesPage - 1) * ITEMS_PER_PAGE, storesPage * ITEMS_PER_PAGE);
   const paginatedCampaigns = campaignsList.slice((campaignsPage - 1) * ITEMS_PER_PAGE, campaignsPage * ITEMS_PER_PAGE);
 
-
-  // --- UPGRADED CSV EXPORT (Fixes the Space/Column Splitting Bug) ---
+  // --- CSV EXPORT ---
   const exportMatrixToCSV = () => {
-    // 1. Wrap headers in quotes to prevent space-splitting
     let csvContent = '"Campaign Name","Store Name","Week 1","Week 2","Week 3","Week 4","Total Payout"\n';
 
     const getWeekStatusForCamp = (storeName: string, campName: string, weekNum: number) => {
-      const storeExecs = allExecutions.filter(e => (e.store_name === storeName || e.extracted_store === storeName) && e.campaign_name === campName);
+      const storeExecs = allExecutions.filter(e => 
+        (e.store_name === storeName || e.extracted_store === storeName) && 
+        (e.campaign_name && e.campaign_name.includes(campName))
+      );
       const execForWeek = storeExecs.find(e => {
         const day = new Date(e.submission_date).getDate();
         if (weekNum === 1 && day >= 1 && day <= 7) return true;
@@ -257,13 +324,10 @@ export default function VMDashboard() {
         });
 
         const totalPayout = approvedCount * (camp.payout || 0);
-        
-        // 2. Wrap all row values in quotes to be perfectly safe
         csvContent += `"${camp.name}","${storeName}","${w1}","${w2}","${w3}","${w4}","${totalPayout}"\n`;
       });
     });
 
-    // 3. Use a Blob with BOM (\uFEFF) to force Excel/Numbers to parse properly
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -272,7 +336,7 @@ export default function VMDashboard() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url); // Clean up memory
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -296,6 +360,7 @@ export default function VMDashboard() {
               </button>
               <button onClick={() => setMainView('missing')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'missing' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
                 <div className="flex items-center gap-3"><span>⚠️ Missing Photos</span></div>
+                {missingExecutions.length > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{missingExecutions.length}</span>}
               </button>
               <button onClick={() => setMainView('review')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'review' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>🗂️ Execution History</button>
               <button onClick={() => setMainView('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'settings' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>⚙️ Master Settings</button>
@@ -311,7 +376,6 @@ export default function VMDashboard() {
       {/* MAIN CONTENT AREA */}
       <div className="flex-1 p-8 overflow-y-auto z-0">
         
-        {/* LOGIN PAGE */}
         {mainView === 'login' && (
           <div className="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 animate-in fade-in zoom-in-95 duration-300">
              <div className="text-center mb-8"><div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div><h2 className="text-2xl font-bold text-slate-900">Admin Access</h2></div>
@@ -323,7 +387,6 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* ANALYTICS DASHBOARD */}
         {mainView === 'dashboard' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
              <div className="flex justify-between items-end mb-8">
@@ -337,7 +400,6 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* ADMIN QUEUE */}
         {mainView === 'queue' && (
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
@@ -367,7 +429,6 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* MISSING PHOTOS */}
         {mainView === 'missing' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
             <div className="flex justify-between items-end mb-8">
@@ -414,7 +475,6 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* EXECUTION HISTORY */}
         {mainView === 'review' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
             <div className="flex justify-between items-end mb-8">
@@ -502,6 +562,27 @@ export default function VMDashboard() {
             {/* TAB: STORES */}
             {settingsTab === 'stores' && (
               <div className="space-y-6">
+                
+                {/* LIVE METRICS DASHBOARD */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Stores</p>
+                    <p className="text-2xl font-black text-slate-800">{totalStoresCount}</p>
+                  </div>
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Aligned</p>
+                    <p className="text-2xl font-black text-green-600">{alignedStoresCount}</p>
+                  </div>
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Unaligned</p>
+                    <p className="text-2xl font-black text-amber-600">{unalignedStoresCount}</p>
+                  </div>
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Alignment %</p>
+                    <p className="text-2xl font-black text-blue-600">{alignedPercentage}%</p>
+                  </div>
+                </div>
+
                 <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm flex flex-col md:flex-row gap-4 items-end">
                   <div className="flex-1">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Add Single Store</label>
@@ -524,7 +605,7 @@ export default function VMDashboard() {
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-widest">
-                        <th className="p-4 font-semibold">Store Name</th>
+                        <th className="p-4 font-semibold w-1/2">Store Name</th>
                         <th className="p-4 font-semibold text-right">Actions</th>
                       </tr>
                     </thead>
@@ -532,8 +613,33 @@ export default function VMDashboard() {
                       {storesList.length === 0 && <tr><td colSpan={2} className="p-8 text-center text-slate-500">No stores configured. Add some above!</td></tr>}
                       {paginatedStores.map(store => (
                         <tr key={store.id} className="hover:bg-slate-50">
-                          <td className="p-4 font-medium text-slate-800">{store.name}</td>
+                          
+                          {/* INLINE EDIT STORE NAME */}
+                          {editingStoreId === store.id ? (
+                            <td className="p-3">
+                              <input 
+                                type="text" 
+                                value={editingStoreName} 
+                                onChange={(e) => setEditingStoreName(e.target.value)} 
+                                className="w-full border border-blue-300 rounded-md px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 shadow-inner"
+                                autoFocus
+                              />
+                            </td>
+                          ) : (
+                            <td className="p-4 font-medium text-slate-800">{store.name}</td>
+                          )}
+
                           <td className="p-4 text-right flex justify-end gap-2">
+                            {editingStoreId === store.id ? (
+                              <button onClick={() => saveEditStore(store.id, store.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm">
+                                💾 Save
+                              </button>
+                            ) : (
+                              <button onClick={() => startEditStore(store)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors">
+                                ✏️ Edit
+                              </button>
+                            )}
+
                             <button onClick={() => toggleStoreAlignment(store.id, store.aligned)} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors border ${store.aligned ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'}`}>
                               {store.aligned ? '✓ Aligned' : '✕ Not Aligned'}
                             </button>
@@ -553,15 +659,11 @@ export default function VMDashboard() {
             {/* TAB: CAMPAIGNS */}
             {settingsTab === 'campaigns' && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                
-                {/* Create Campaign Form */}
                 <div className="md:col-span-1 bg-white p-6 border border-slate-200 rounded-xl shadow-sm h-fit">
                   <h3 className="text-lg font-bold text-slate-900 mb-6 border-b border-slate-100 pb-2">Create Campaign</h3>
                   <div className="space-y-4">
                     <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Campaign Name</label><input type="text" value={newCampName} onChange={(e) => setNewCampName(e.target.value)} placeholder="e.g. Veeba Ketchup" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
                     <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Weekly Payout (₹)</label><input type="number" value={newCampPayout} onChange={(e) => setNewCampPayout(Number(e.target.value))} placeholder="500" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
-                    
-                    {/* NEW: Date Range Inputs */}
                     <div className="grid grid-cols-2 gap-2">
                       <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Start Date</label><input type="date" value={newCampStart} onChange={(e) => setNewCampStart(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                       <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">End Date</label><input type="date" value={newCampEnd} onChange={(e) => setNewCampEnd(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
@@ -585,7 +687,7 @@ export default function VMDashboard() {
                     <div className="pt-2 border-t border-slate-100 mt-4">
                       <div className="flex justify-between items-center mb-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Assign Stores</label>
-                        <button type="button" onClick={selectAllAlignedStores} className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-1 rounded hover:bg-blue-100 transition-colors">+ Select All Aligned</button>
+                        <button type="button" onClick={() => selectAllAlignedStores()} className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-1 rounded hover:bg-blue-100 transition-colors">+ Select All Aligned</button>
                       </div>
                       <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 space-y-1">
                         {storesList.length === 0 && <p className="text-xs text-slate-400 p-2 text-center">Add stores first!</p>}
@@ -604,9 +706,8 @@ export default function VMDashboard() {
                 <div className="md:col-span-2 space-y-4">
                   {campaignsList.length === 0 && <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-500">No campaigns created yet.</div>}
                   {paginatedCampaigns.map(campaign => (
-                    <div key={campaign.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden">
+                    <div key={campaign.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden group">
                       
-                      {/* Live Status Indicator */}
                       {campaign.end_date && new Date(campaign.end_date) < new Date() ? (
                         <div className="absolute top-0 right-0 bg-slate-200 text-slate-600 text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-widest">Expired</div>
                       ) : (
@@ -620,8 +721,6 @@ export default function VMDashboard() {
                           <p className="text-xs text-slate-500 mt-1 mb-2">
                             {campaign.start_date ? new Date(campaign.start_date).toLocaleDateString() : 'N/A'} - {campaign.end_date ? new Date(campaign.end_date).toLocaleDateString() : 'Ongoing'}
                           </p>
-                          
-                          {/* Emphasized Linked Badge */}
                           {campaign.dependencies && campaign.dependencies.length > 0 && (
                             <p className="text-xs font-bold text-amber-700 mt-1 bg-amber-100 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-amber-300 shadow-sm">
                               <span>🔗</span> Linked Required: {campaign.dependencies.join(', ')}
@@ -630,20 +729,18 @@ export default function VMDashboard() {
                         </div>
                         <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1 rounded-full border border-blue-100">{campaign.stores?.length || 0} Stores</span>
                       </div>
-                      
                       <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 max-h-24 overflow-y-auto flex flex-wrap gap-2 mb-4">
                         {campaign.stores?.map((s: string, i: number) => (
                           <span key={i} className="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-1 rounded shadow-sm">{s}</span>
                         ))}
                       </div>
 
-                      {/* NEW: Delete Button Footer */}
-                      <div className="pt-4 border-t border-slate-100 flex justify-end">
-                        <button 
-                          onClick={() => handleDeleteCampaign(campaign.id, campaign.name)} 
-                          className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-2"
-                        >
-                          🗑️ Delete Campaign
+                      <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
+                        <button onClick={() => setEditingCampaign(campaign)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors flex items-center gap-2">
+                          ✏️ Edit
+                        </button>
+                        <button onClick={() => handleDeleteCampaign(campaign.id, campaign.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-2">
+                          🗑️ Delete
                         </button>
                       </div>
                     </div>
@@ -654,12 +751,72 @@ export default function VMDashboard() {
             )}
           </div>
         )}
-
       </div>
+
+      {/* --- EDIT CAMPAIGN MODAL --- */}
+      {editingCampaign && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh]">
+            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+              <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">✏️ Edit Campaign</h3>
+              <button onClick={() => setEditingCampaign(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-colors">✕</button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto space-y-5">
+               <div>
+                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Campaign Name</label>
+                 <input type="text" value={editingCampaign.name} onChange={e => setEditingCampaign({...editingCampaign, name: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+               </div>
+               <div>
+                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Weekly Payout (₹)</label>
+                 <input type="number" value={editingCampaign.payout} onChange={e => setEditingCampaign({...editingCampaign, payout: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+               </div>
+               <div className="grid grid-cols-2 gap-4">
+                 <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Start Date</label><input type="date" value={editingCampaign.start_date || ''} onChange={e => setEditingCampaign({...editingCampaign, start_date: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+                 <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">End Date</label><input type="date" value={editingCampaign.end_date || ''} onChange={e => setEditingCampaign({...editingCampaign, end_date: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+               </div>
+
+               {/* Dependencies Edit */}
+               <div className="pt-4 border-t border-slate-100">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">🔗 Required Co-Campaigns</label>
+                  <div className="max-h-24 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 space-y-1">
+                     {campaignsList.filter(c => c.id !== editingCampaign.id).map(camp => (
+                       <label key={camp.id} className="flex items-center gap-2 p-1 hover:bg-white rounded cursor-pointer text-sm">
+                         <input type="checkbox" checked={(editingCampaign.dependencies || []).includes(camp.name)} onChange={() => toggleDependency(camp.name, true)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                         {camp.name}
+                       </label>
+                     ))}
+                  </div>
+               </div>
+
+               {/* Stores Edit */}
+               <div className="pt-4 border-t border-slate-100">
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Assigned Stores</label>
+                    <button type="button" onClick={() => selectAllAlignedStores(true)} className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-1 rounded hover:bg-blue-100">+ Select All Aligned</button>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 space-y-1">
+                    {storesList.map(store => (
+                      <label key={store.id} className="flex items-center gap-2 p-1.5 hover:bg-white rounded cursor-pointer">
+                        <input type="checkbox" checked={(editingCampaign.stores || []).includes(store.name)} onChange={() => toggleStoreInCampaign(store.name, true)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                        <span className={`text-sm ${!store.aligned && 'text-slate-400 italic'}`}>{store.name} {!store.aligned && '(Unassigned)'}</span>
+                      </label>
+                    ))}
+                  </div>
+               </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
+               <button onClick={() => setEditingCampaign(null)} className="px-5 py-2.5 rounded-lg text-sm font-bold text-slate-600 bg-white border border-slate-300 hover:bg-slate-50 transition-colors">Cancel</button>
+               <button onClick={saveEditCampaign} className="px-5 py-2.5 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition-colors">Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* PHOTO VIEWER MODAL */}
       {selectedPhoto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-4xl w-full flex flex-col">
             <div className="p-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
               <div>

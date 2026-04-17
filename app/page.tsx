@@ -3,7 +3,6 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient'; 
 import ExecutionCard from '../components/ExecutionCard'; 
 
-// Helper Component for Pagination
 const Pagination = ({ total, page, setPage, perPage = 10 }: { total: number, page: number, setPage: (p: number) => void, perPage?: number }) => {
   const maxPages = Math.ceil(total / perPage);
   if (maxPages <= 1) return null;
@@ -22,6 +21,7 @@ export default function VMDashboard() {
   const [loginError, setLoginError] = useState('');
 
   const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'missing' | 'review' | 'settings' | 'login'>('dashboard');
+  const [dashboardTab, setDashboardTab] = useState<'general' | string>('general');
   const [settingsTab, setSettingsTab] = useState<'stores' | 'campaigns'>('stores');
   const [selectedMonth, setSelectedMonth] = useState('April');
 
@@ -36,12 +36,12 @@ export default function VMDashboard() {
   const [campaignsList, setCampaignsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // --- PAGINATION STATES ---
   const [queuePage, setQueuePage] = useState(1);
   const [missingPage, setMissingPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
   const [storesPage, setStoresPage] = useState(1);
   const [campaignsPage, setCampaignsPage] = useState(1);
+  const [matrixPage, setMatrixPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
 
   const [reviewFilter, setReviewFilter] = useState<'all' | 'approved' | 'rejected' | 'in_review'>('all');
@@ -52,7 +52,6 @@ export default function VMDashboard() {
 
   const [selectedPhoto, setSelectedPhoto] = useState<{ store: string; date: string; status: string; image: string; raw_text: string } | null>(null);
 
-  // --- SETTINGS CREATION STATES ---
   const [newStoreName, setNewStoreName] = useState('');
   const [newCampName, setNewCampName] = useState('');
   const [newCampPayout, setNewCampPayout] = useState<number | ''>('');
@@ -61,7 +60,6 @@ export default function VMDashboard() {
   const [newCampStart, setNewCampStart] = useState('');
   const [newCampEnd, setNewCampEnd] = useState('');
   
-  // --- EDITING STATES ---
   const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
   const [editingStoreName, setEditingStoreName] = useState('');
   const [editingCampaign, setEditingCampaign] = useState<any | null>(null);
@@ -88,8 +86,8 @@ export default function VMDashboard() {
   useEffect(() => { fetchData(); }, [mainView]);
 
   useEffect(() => {
-    setQueuePage(1); setMissingPage(1); setHistoryPage(1); setStoresPage(1); setCampaignsPage(1);
-  }, [mainView, settingsTab, reviewFilter, storeFilter, campaignFilter, missingCampaignFilter, searchQuery]);
+    setQueuePage(1); setMissingPage(1); setHistoryPage(1); setStoresPage(1); setCampaignsPage(1); setMatrixPage(1);
+  }, [mainView, settingsTab, reviewFilter, storeFilter, campaignFilter, missingCampaignFilter, searchQuery, dashboardTab]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,7 +106,6 @@ export default function VMDashboard() {
     } catch (error) { console.error("Sync failed:", error); }
   };
 
-  // --- STORE ACTIONS ---
   const handleAddSingleStore = async () => {
     if (!newStoreName.trim()) return;
     await supabase.from('stores').insert([{ name: newStoreName, aligned: true }]);
@@ -126,24 +123,13 @@ export default function VMDashboard() {
     }
   };
 
-  const startEditStore = (store: any) => {
-    setEditingStoreId(store.id);
-    setEditingStoreName(store.name);
-  };
+  const startEditStore = (store: any) => { setEditingStoreId(store.id); setEditingStoreName(store.name); };
 
   const saveEditStore = async (id: number, oldName: string) => {
     if (!editingStoreName.trim()) return setEditingStoreId(null);
-    
-    // 1. Update the Store record
     await supabase.from('stores').update({ name: editingStoreName }).eq('id', id);
-    
-    // 2. Cascade the name change to execution history
-    if (editingStoreName !== oldName) {
-      await supabase.from('executions').update({ store_name: editingStoreName }).eq('store_name', oldName);
-    }
-    
-    setEditingStoreId(null);
-    fetchData();
+    if (editingStoreName !== oldName) await supabase.from('executions').update({ store_name: editingStoreName }).eq('store_name', oldName);
+    setEditingStoreId(null); fetchData();
   };
 
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -161,7 +147,6 @@ export default function VMDashboard() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // --- CAMPAIGN ACTIONS ---
   const toggleStoreInCampaign = (storeName: string, isEditing = false) => {
     if (isEditing && editingCampaign) {
       const stores = editingCampaign.stores || [];
@@ -184,55 +169,36 @@ export default function VMDashboard() {
 
   const selectAllAlignedStores = (isEditing = false) => {
     const alignedNames = storesList.filter(s => s.aligned).map(s => s.name);
-    if (isEditing && editingCampaign) {
-      setEditingCampaign({ ...editingCampaign, stores: alignedNames });
-    } else {
-      setNewCampStores(alignedNames);
-    }
+    if (isEditing && editingCampaign) setEditingCampaign({ ...editingCampaign, stores: alignedNames });
+    else setNewCampStores(alignedNames);
   };
 
   const handleAddCampaign = async () => {
     if (!newCampName.trim() || !newCampPayout || !newCampStart || !newCampEnd) return alert("Please fill all required campaign fields including dates.");
-    await supabase.from('campaigns').insert([{ 
-      name: newCampName, payout: Number(newCampPayout), stores: newCampStores, dependencies: newCampDependencies,
-      start_date: newCampStart, end_date: newCampEnd
-    }]);
+    await supabase.from('campaigns').insert([{ name: newCampName, payout: Number(newCampPayout), stores: newCampStores, dependencies: newCampDependencies, start_date: newCampStart, end_date: newCampEnd }]);
     setNewCampName(''); setNewCampPayout(''); setNewCampStores([]); setNewCampDependencies([]); setNewCampStart(''); setNewCampEnd(''); fetchData();
   };
 
   const handleDeleteCampaign = async (id: number, campName: string) => {
     if (confirm(`Are you sure you want to permanently delete the "${campName}" campaign?`)) {
-      await supabase.from('campaigns').delete().eq('id', id);
-      fetchData();
+      await supabase.from('campaigns').delete().eq('id', id); fetchData();
     }
   };
 
   const saveEditCampaign = async () => {
-    if (!editingCampaign.name.trim() || !editingCampaign.payout || !editingCampaign.start_date || !editingCampaign.end_date) {
-      return alert("Please ensure all fields are filled out.");
-    }
-    
+    if (!editingCampaign.name.trim() || !editingCampaign.payout || !editingCampaign.start_date || !editingCampaign.end_date) return alert("Please ensure all fields are filled out.");
     await supabase.from('campaigns').update({
-      name: editingCampaign.name,
-      payout: Number(editingCampaign.payout),
-      start_date: editingCampaign.start_date,
-      end_date: editingCampaign.end_date,
-      stores: editingCampaign.stores || [],
-      dependencies: editingCampaign.dependencies || []
+      name: editingCampaign.name, payout: Number(editingCampaign.payout), start_date: editingCampaign.start_date, end_date: editingCampaign.end_date,
+      stores: editingCampaign.stores || [], dependencies: editingCampaign.dependencies || []
     }).eq('id', editingCampaign.id);
-    
-    setEditingCampaign(null);
-    fetchData();
+    setEditingCampaign(null); fetchData();
   };
 
-
-  // --- LIVE METRICS CALCULATION ---
   const totalStoresCount = storesList.length;
   const alignedStoresCount = storesList.filter(s => s.aligned).length;
   const unalignedStoresCount = totalStoresCount - alignedStoresCount;
   const alignedPercentage = totalStoresCount > 0 ? Math.round((alignedStoresCount / totalStoresCount) * 100) : 0;
 
-  // --- FILTERING & SLICING ---
   const filteredReviewData = useMemo(() => {
     return allExecutions.filter(item => {
       const mappedStatus = item.status === 'pending_admin' ? 'in_review' : item.status;
@@ -271,15 +237,9 @@ export default function VMDashboard() {
     return missing;
   }, [campaignsList, allExecutions, missingCampaignFilter, missingStartDate, missingEndDate]);
 
-  const paginatedQueue = pendingExecutions.slice((queuePage - 1) * ITEMS_PER_PAGE, queuePage * ITEMS_PER_PAGE);
-  const paginatedMissing = missingExecutions.slice((missingPage - 1) * ITEMS_PER_PAGE, missingPage * ITEMS_PER_PAGE);
-  const paginatedHistory = filteredReviewData.slice((historyPage - 1) * ITEMS_PER_PAGE, historyPage * ITEMS_PER_PAGE);
-  const paginatedStores = storesList.slice((storesPage - 1) * ITEMS_PER_PAGE, storesPage * ITEMS_PER_PAGE);
-  const paginatedCampaigns = campaignsList.slice((campaignsPage - 1) * ITEMS_PER_PAGE, campaignsPage * ITEMS_PER_PAGE);
-
-  // --- CSV EXPORT ---
-  const exportMatrixToCSV = () => {
-    let csvContent = '"Campaign Name","Store Name","Week 1","Week 2","Week 3","Week 4","Total Payout"\n';
+  // --- RAW STORE-LEVEL MATRIX ENGINE ---
+  const matrixData = useMemo(() => {
+    const rows: { campaign: string; store: string; w1: string; w2: string; w3: string; w4: string; totalPayout: number }[] = [];
 
     const getWeekStatusForCamp = (storeName: string, campName: string, weekNum: number) => {
       const storeExecs = allExecutions.filter(e => 
@@ -323,21 +283,99 @@ export default function VMDashboard() {
           }
         });
 
-        const totalPayout = approvedCount * (camp.payout || 0);
-        csvContent += `"${camp.name}","${storeName}","${w1}","${w2}","${w3}","${w4}","${totalPayout}"\n`;
+        rows.push({
+          campaign: camp.name,
+          store: storeName,
+          w1, w2, w3, w4,
+          totalPayout: approvedCount * (camp.payout || 0)
+        });
       });
+    });
+
+    return rows;
+  }, [campaignsList, allExecutions]);
+
+  // --- NEW: GENERAL TAB EXECUTIVE SUMMARY ENGINE ---
+  const generalMatrixData = useMemo(() => {
+    return campaignsList.map(camp => {
+      const campRows = matrixData.filter(r => r.campaign === camp.name);
+      const enrolledCount = camp.stores?.length || 0;
+
+      const calcWeek = (weekKey: 'w1'|'w2'|'w3'|'w4') => {
+        if (enrolledCount === 0) return { sub: 0, app: 0, rej: 0 };
+        
+        const submitted = campRows.filter(r => r[weekKey] !== 'Missed').length;
+        const approved = campRows.filter(r => r[weekKey] === 'Approved').length;
+        const rejected = campRows.filter(r => r[weekKey] === 'Rejected').length;
+        
+        return {
+          sub: Math.round((submitted / enrolledCount) * 100),
+          app: Math.round((approved / enrolledCount) * 100),
+          rej: Math.round((rejected / enrolledCount) * 100),
+        };
+      };
+
+      return {
+        id: camp.id,
+        campaign: camp.name,
+        enrolled: enrolledCount,
+        w1: calcWeek('w1'),
+        w2: calcWeek('w2'),
+        w3: calcWeek('w3'),
+        w4: calcWeek('w4'),
+        totalLiability: campRows.reduce((sum, r) => sum + r.totalPayout, 0)
+      };
+    });
+  }, [campaignsList, matrixData]);
+
+  // Apply Dashboard Tab Filter (Only used when rendering a specific campaign tab)
+  const filteredDashboardData = useMemo(() => {
+    if (dashboardTab === 'general') return matrixData;
+    return matrixData.filter(row => row.campaign === dashboardTab);
+  }, [matrixData, dashboardTab]);
+
+  const dashboardTotalPayout = useMemo(() => {
+    return filteredDashboardData.reduce((sum, row) => sum + row.totalPayout, 0);
+  }, [filteredDashboardData]);
+
+  const paginatedQueue = pendingExecutions.slice((queuePage - 1) * ITEMS_PER_PAGE, queuePage * ITEMS_PER_PAGE);
+  const paginatedMissing = missingExecutions.slice((missingPage - 1) * ITEMS_PER_PAGE, missingPage * ITEMS_PER_PAGE);
+  const paginatedHistory = filteredReviewData.slice((historyPage - 1) * ITEMS_PER_PAGE, historyPage * ITEMS_PER_PAGE);
+  const paginatedStores = storesList.slice((storesPage - 1) * ITEMS_PER_PAGE, storesPage * ITEMS_PER_PAGE);
+  const paginatedCampaigns = campaignsList.slice((campaignsPage - 1) * ITEMS_PER_PAGE, campaignsPage * ITEMS_PER_PAGE);
+  
+  // Slicing for both view types
+  const paginatedGeneralMatrix = generalMatrixData.slice((matrixPage - 1) * ITEMS_PER_PAGE, matrixPage * ITEMS_PER_PAGE);
+  const paginatedMatrix = filteredDashboardData.slice((matrixPage - 1) * ITEMS_PER_PAGE, matrixPage * ITEMS_PER_PAGE);
+
+  const exportMatrixToCSV = () => {
+    let csvContent = '"Campaign Name","Store Name","Week 1","Week 2","Week 3","Week 4","Total Payout"\n';
+
+    // The CSV will always export the raw store-by-store data, even if viewing the General summary
+    filteredDashboardData.forEach(row => {
+        csvContent += `"${row.campaign}","${row.store}","${row.w1}","${row.w2}","${row.w3}","${row.w4}","${row.totalPayout}"\n`;
     });
 
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `SuperK_VM_Analytics_${selectedMonth}.csv`);
+    const fileNameSuffix = dashboardTab === 'general' ? 'All_Campaigns' : dashboardTab.replace(/[^a-zA-Z0-9]/g, '_');
+    link.setAttribute("download", `SuperK_VM_Analytics_${fileNameSuffix}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+
+  // UI Helper for the Executive Summary Cells
+  const renderWeekCell = (week: {sub: number, app: number, rej: number}) => (
+    <div className="flex flex-col gap-0.5 text-[10px] w-24 mx-auto bg-slate-50 p-1.5 rounded-md border border-slate-100">
+      <div className="flex justify-between items-center"><span className="text-slate-400 font-bold">SUB</span><span className="font-black text-blue-600">{week.sub}%</span></div>
+      <div className="flex justify-between items-center"><span className="text-slate-400 font-bold">APP</span><span className="font-black text-green-600">{week.app}%</span></div>
+      <div className="flex justify-between items-center"><span className="text-slate-400 font-bold">REJ</span><span className="font-black text-red-600">{week.rej}%</span></div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans relative">
@@ -387,15 +425,109 @@ export default function VMDashboard() {
           </div>
         )}
 
+        {/* VIEW: ANALYTICS DASHBOARD */}
         {mainView === 'dashboard' && (
-          <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
-             <div className="flex justify-between items-end mb-8">
+          <div className="max-w-6xl mx-auto animate-in fade-in duration-500 flex flex-col h-full">
+            
+            <div className="flex justify-between items-end mb-6">
               <div><h2 className="text-3xl font-bold text-slate-900">Execution Overview</h2><p className="text-slate-500 mt-1">Track visual merchandising compliance across the network.</p></div>
-              <button onClick={exportMatrixToCSV} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm flex items-center gap-2">⬇️ Download CSV</button>
+              <div className="flex gap-4 items-center">
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Payout Liability</p>
+                  <p className="text-xl font-black text-green-600">₹{dashboardTotalPayout.toLocaleString()}</p>
+                </div>
+                <button onClick={exportMatrixToCSV} className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm flex items-center gap-2 h-fit">⬇️ Export CSV</button>
+              </div>
             </div>
-            <div className="text-slate-500 bg-white p-12 text-center rounded-xl border border-slate-200 shadow-sm flex flex-col items-center">
-                <span className="text-4xl mb-4">📊</span><h3 className="text-lg font-bold text-slate-900 mb-2">Live Analytics Matrix Active</h3>
-                <p>Click &quot;Download CSV&quot; above to instantly generate the finance payout report based on historical data.</p>
+
+            <div className="flex overflow-x-auto space-x-2 bg-slate-200/50 p-1 rounded-xl mb-6 w-full max-w-full border border-slate-200">
+              <button onClick={() => setDashboardTab('general')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${dashboardTab === 'general' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Executive Summary</button>
+              {campaignsList.map(camp => (
+                <button key={camp.id} onClick={() => setDashboardTab(camp.name)} className={`whitespace-nowrap px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${dashboardTab === camp.name ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                  {camp.name}
+                </button>
+              ))}
+            </div>
+            
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+              
+              {/* --- TAB VIEW 1: EXECUTIVE SUMMARY (General) --- */}
+              {dashboardTab === 'general' ? (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-500 uppercase tracking-widest">
+                      <th className="p-4 font-semibold">Active Campaign</th>
+                      <th className="p-4 font-semibold text-center">Stores</th>
+                      <th className="p-4 font-semibold text-center w-28">W1 (1-7)</th>
+                      <th className="p-4 font-semibold text-center w-28">W2 (8-14)</th>
+                      <th className="p-4 font-semibold text-center w-28">W3 (15-21)</th>
+                      <th className="p-4 font-semibold text-center w-28">W4 (22+)</th>
+                      <th className="p-4 font-semibold text-right">Total Liability</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {generalMatrixData.length === 0 ? (
+                      <tr><td colSpan={7} className="p-12 text-center text-slate-500">No campaigns configured yet.</td></tr>
+                    ) : (
+                      paginatedGeneralMatrix.map((row, i) => (
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-4 font-bold text-slate-800">{row.campaign}</td>
+                          <td className="p-4 text-center font-bold text-slate-500">{row.enrolled}</td>
+                          <td className="p-4">{renderWeekCell(row.w1)}</td>
+                          <td className="p-4">{renderWeekCell(row.w2)}</td>
+                          <td className="p-4">{renderWeekCell(row.w3)}</td>
+                          <td className="p-4">{renderWeekCell(row.w4)}</td>
+                          <td className="p-4 text-right font-black text-green-600">₹{row.totalLiability.toLocaleString()}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              ) : (
+
+              /* --- TAB VIEW 2: INDIVIDUAL CAMPAIGN (Store Level) --- */
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-500 uppercase tracking-widest">
+                      <th className="p-4 font-semibold">Store</th>
+                      <th className="p-4 font-semibold text-center w-24">W1 (1-7)</th>
+                      <th className="p-4 font-semibold text-center w-24">W2 (8-14)</th>
+                      <th className="p-4 font-semibold text-center w-24">W3 (15-21)</th>
+                      <th className="p-4 font-semibold text-center w-24">W4 (22+)</th>
+                      <th className="p-4 font-semibold text-right">Payout</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {filteredDashboardData.length === 0 ? (
+                      <tr><td colSpan={6} className="p-12 text-center text-slate-500">No stores enrolled in this campaign.</td></tr>
+                    ) : (
+                      paginatedMatrix.map((row, i) => {
+                        const getStatusColor = (status: string) => {
+                          if (status === 'Approved') return 'bg-green-100 text-green-700 font-bold';
+                          if (status === 'Rejected') return 'bg-red-100 text-red-700 font-bold';
+                          if (status === 'Missed') return 'bg-slate-100 text-slate-500 font-semibold italic';
+                          return 'bg-amber-100 text-amber-700 font-bold';
+                        };
+
+                        return (
+                          <tr key={i} className="hover:bg-slate-50 transition-colors">
+                            <td className="p-4 font-medium text-slate-600">{row.store}</td>
+                            <td className="p-4 text-center"><span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 ${getStatusColor(row.w1)}`}>{row.w1}</span></td>
+                            <td className="p-4 text-center"><span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 ${getStatusColor(row.w2)}`}>{row.w2}</span></td>
+                            <td className="p-4 text-center"><span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 ${getStatusColor(row.w3)}`}>{row.w3}</span></td>
+                            <td className="p-4 text-center"><span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 ${getStatusColor(row.w4)}`}>{row.w4}</span></td>
+                            <td className="p-4 text-right font-black text-green-600">₹{row.totalPayout}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              )}
+
+              {/* PAGINATION SWITCHER based on tab */}
+              {dashboardTab === 'general' && generalMatrixData.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={generalMatrixData.length} page={matrixPage} setPage={setMatrixPage} /></div>}
+              {dashboardTab !== 'general' && filteredDashboardData.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={filteredDashboardData.length} page={matrixPage} setPage={setMatrixPage} /></div>}
             </div>
           </div>
         )}
@@ -563,7 +695,6 @@ export default function VMDashboard() {
             {settingsTab === 'stores' && (
               <div className="space-y-6">
                 
-                {/* LIVE METRICS DASHBOARD */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                   <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Stores</p>
@@ -613,17 +744,9 @@ export default function VMDashboard() {
                       {storesList.length === 0 && <tr><td colSpan={2} className="p-8 text-center text-slate-500">No stores configured. Add some above!</td></tr>}
                       {paginatedStores.map(store => (
                         <tr key={store.id} className="hover:bg-slate-50">
-                          
-                          {/* INLINE EDIT STORE NAME */}
                           {editingStoreId === store.id ? (
                             <td className="p-3">
-                              <input 
-                                type="text" 
-                                value={editingStoreName} 
-                                onChange={(e) => setEditingStoreName(e.target.value)} 
-                                className="w-full border border-blue-300 rounded-md px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 shadow-inner"
-                                autoFocus
-                              />
+                              <input type="text" value={editingStoreName} onChange={(e) => setEditingStoreName(e.target.value)} className="w-full border border-blue-300 rounded-md px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 shadow-inner" autoFocus />
                             </td>
                           ) : (
                             <td className="p-4 font-medium text-slate-800">{store.name}</td>
@@ -631,13 +754,9 @@ export default function VMDashboard() {
 
                           <td className="p-4 text-right flex justify-end gap-2">
                             {editingStoreId === store.id ? (
-                              <button onClick={() => saveEditStore(store.id, store.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm">
-                                💾 Save
-                              </button>
+                              <button onClick={() => saveEditStore(store.id, store.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm">💾 Save</button>
                             ) : (
-                              <button onClick={() => startEditStore(store)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors">
-                                ✏️ Edit
-                              </button>
+                              <button onClick={() => startEditStore(store)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors">✏️ Edit</button>
                             )}
 
                             <button onClick={() => toggleStoreAlignment(store.id, store.aligned)} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors border ${store.aligned ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'}`}>

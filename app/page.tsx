@@ -182,9 +182,21 @@ export default function VMDashboard() {
   };
 
   const handleAddCampaign = async () => {
-    if (!newCampName.trim() || !newCampPayout || !newCampStart || !newCampEnd) return alert("Please fill all required campaign fields including dates.");
+    // Fixed validation to allow 0 payout
+    if (!newCampName.trim() || newCampPayout === '' || !newCampStart || !newCampEnd) return alert("Please fill all required campaign fields including dates.");
     await supabase.from('campaigns').insert([{ name: newCampName, payout: Number(newCampPayout), stores: newCampStores, dependencies: newCampDependencies, start_date: newCampStart, end_date: newCampEnd }]);
     setNewCampName(''); setNewCampPayout(''); setNewCampStores([]); setNewCampDependencies([]); setNewCampStart(''); setNewCampEnd(''); fetchData();
+  };
+
+  // NEW: Clone Campaign Logic
+  const startDuplicateCampaign = (camp: any) => {
+    setNewCampName(`${camp.name} (Copy)`);
+    setNewCampPayout(camp.payout);
+    setNewCampStart(camp.start_date || '');
+    setNewCampEnd(camp.end_date || '');
+    setNewCampStores(camp.stores || []);
+    setNewCampDependencies(camp.dependencies || []);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDeleteCampaign = async (id: number, campName: string) => {
@@ -194,7 +206,8 @@ export default function VMDashboard() {
   };
 
   const saveEditCampaign = async () => {
-    if (!editingCampaign.name.trim() || !editingCampaign.payout || !editingCampaign.start_date || !editingCampaign.end_date) return alert("Please ensure all fields are filled out.");
+    // Fixed validation to allow 0 payout
+    if (!editingCampaign.name.trim() || editingCampaign.payout === '' || !editingCampaign.start_date || !editingCampaign.end_date) return alert("Please ensure all fields are filled out.");
     await supabase.from('campaigns').update({
       name: editingCampaign.name, payout: Number(editingCampaign.payout), start_date: editingCampaign.start_date, end_date: editingCampaign.end_date,
       stores: editingCampaign.stores || [], dependencies: editingCampaign.dependencies || []
@@ -202,7 +215,6 @@ export default function VMDashboard() {
     setEditingCampaign(null); fetchData();
   };
 
-  // --- REASON ACTIONS ---
   const handleAddReason = async () => {
     if (!newReason.trim()) return;
     await supabase.from('rejection_reasons').insert([{ reason: newReason.trim() }]);
@@ -608,7 +620,6 @@ export default function VMDashboard() {
             ) : (
               <div>
                 <div className="space-y-6">
-                  {/* PASSED REASONSLIST PROP HERE */}
                   {paginatedQueue.map((exec) => <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchData} rejectionReasons={reasonsList} />)}
                 </div>
                 <Pagination total={pendingExecutions.length} page={queuePage} setPage={setQueuePage} />
@@ -830,7 +841,7 @@ export default function VMDashboard() {
                   <h3 className="text-lg font-bold text-slate-900 mb-6 border-b border-slate-100 pb-2">Create Campaign</h3>
                   <div className="space-y-4">
                     <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Campaign Name</label><input type="text" value={newCampName} onChange={(e) => setNewCampName(e.target.value)} placeholder="e.g. Veeba Ketchup" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
-                    <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Weekly Payout (₹)</label><input type="number" value={newCampPayout} onChange={(e) => setNewCampPayout(Number(e.target.value))} placeholder="500" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                    <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Weekly Payout (₹)</label><input type="number" value={newCampPayout} onChange={(e) => setNewCampPayout(e.target.value === '' ? '' : Number(e.target.value))} placeholder="500" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /></div>
                     <div className="grid grid-cols-2 gap-2">
                       <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Start Date</label><input type="date" value={newCampStart} onChange={(e) => setNewCampStart(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                       <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">End Date</label><input type="date" value={newCampEnd} onChange={(e) => setNewCampEnd(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
@@ -897,6 +908,8 @@ export default function VMDashboard() {
                         ))}
                       </div>
                       <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
+                        {/* NEW: Clone Button */}
+                        <button onClick={() => startDuplicateCampaign(campaign)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 transition-colors flex items-center gap-2">📑 Clone</button>
                         <button onClick={() => setEditingCampaign(campaign)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors flex items-center gap-2">✏️ Edit</button>
                         <button onClick={() => handleDeleteCampaign(campaign.id, campaign.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-2">🗑️ Delete</button>
                       </div>
@@ -941,7 +954,6 @@ export default function VMDashboard() {
       {/* --- EDIT CAMPAIGN MODAL --- */}
       {editingCampaign && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
-           {/* ... existing campaign modal code ... */}
            <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh]">
             <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">✏️ Edit Campaign</h3>
@@ -949,7 +961,7 @@ export default function VMDashboard() {
             </div>
             <div className="p-6 overflow-y-auto space-y-5">
                <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Campaign Name</label><input type="text" value={editingCampaign.name} onChange={e => setEditingCampaign({...editingCampaign, name: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Weekly Payout (₹)</label><input type="number" value={editingCampaign.payout} onChange={e => setEditingCampaign({...editingCampaign, payout: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Weekly Payout (₹)</label><input type="number" value={editingCampaign.payout} onChange={e => setEditingCampaign({...editingCampaign, payout: e.target.value === '' ? '' : Number(e.target.value)})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                <div className="grid grid-cols-2 gap-4">
                  <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Start Date</label><input type="date" value={editingCampaign.start_date || ''} onChange={e => setEditingCampaign({...editingCampaign, start_date: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                  <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">End Date</label><input type="date" value={editingCampaign.end_date || ''} onChange={e => setEditingCampaign({...editingCampaign, end_date: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>

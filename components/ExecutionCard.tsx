@@ -2,16 +2,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-// 📍 THIS IS WHERE YOU ADD OR EDIT REJECTION REASONS
-const REJECTION_REASONS = [
-  "Very less quantity",
-  "Other brands present in the same shelf",
-  "It should be a shelf execution instead of End Cap Execution",
-  "It should be an end cap execution instead of shelf execution",
-  "Photo not clear",
-  "Other (Type custom reason)"
-];
-
 const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
   if (!rawText) return '';
   let cleanInput = rawText.toLowerCase().replace(/[.,!*'_]/g, ' ');
@@ -37,17 +27,15 @@ const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
   return highestScore > 0 ? bestMatch : '';
 };
 
-export default function ExecutionCard({ execution, onUpdate }: { execution: any, onUpdate: () => void }) {
+// NEW: Accept rejectionReasons as a prop
+export default function ExecutionCard({ execution, onUpdate, rejectionReasons }: { execution: any, onUpdate: () => void, rejectionReasons: any[] }) {
   const [mappedStore, setMappedStore] = useState(execution.store_name || '');
-  
-  // Changed to an array to support multiple tags
   const initialCampaigns = execution.campaign_name ? execution.campaign_name.split(', ') : [];
   const [selectedCampaigns, setSelectedCampaigns] = useState<string[]>(initialCampaigns);
   
   const [officialStores, setOfficialStores] = useState<string[]>([]);
   const [allCampaigns, setAllCampaigns] = useState<any[]>([]);
   
-  // UI Flow States
   const [actionState, setActionState] = useState<'idle' | 'approving' | 'rejecting'>('idle');
   const [rejectReason, setRejectReason] = useState('');
   const [customRejectReason, setCustomRejectReason] = useState('');
@@ -73,29 +61,22 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
   }, []);
 
   const toggleCampaign = (campName: string) => {
-    setSelectedCampaigns(prev => 
-      prev.includes(campName) ? prev.filter(c => c !== campName) : [...prev, campName]
-    );
+    setSelectedCampaigns(prev => prev.includes(campName) ? prev.filter(c => c !== campName) : [...prev, campName]);
   };
 
   const confirmApprove = async () => {
     if (!mappedStore) return alert("Please map a valid Store before approving.");
-    
-    // Join multiple campaigns into a single string for the database
     const finalCampaignString = selectedCampaigns.length > 0 ? selectedCampaigns.join(', ') : null;
-
     const { error } = await supabase.from('executions').update({ 
       status: 'approved', store_name: mappedStore, campaign_name: finalCampaignString,
       rejection_reason: null, reviewed_at: new Date().toISOString()
     }).eq('id', execution.id);
-
     if (!error) onUpdate(); else alert("Error: " + error.message);
   };
 
   const confirmReject = async () => {
     if (!rejectReason) return alert("Please select a rejection reason.");
     if (rejectReason === 'Other (Type custom reason)' && !customRejectReason.trim()) return alert("Please type a custom reason.");
-
     const finalReason = rejectReason === 'Other (Type custom reason)' ? customRejectReason : rejectReason;
     const finalCampaignString = selectedCampaigns.length > 0 ? selectedCampaigns.join(', ') : null;
 
@@ -103,7 +84,6 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
       status: 'rejected', store_name: mappedStore, campaign_name: finalCampaignString,
       rejection_reason: finalReason, reviewed_at: new Date().toISOString()
     }).eq('id', execution.id);
-
     if (!error) onUpdate(); else alert("Error: " + error.message);
   };
 
@@ -152,10 +132,8 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
           </div>
         </div>
 
-        {/* --- ACTION AREA --- */}
         <div className="mt-4 border-t border-slate-100 pt-4 min-h-[120px] flex flex-col justify-end">
           
-          {/* STATE 1: ALREADY PROCESSED */}
           {isProcessed && (
             <div>
                <div className="mb-4">
@@ -179,7 +157,6 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
             </div>
           )}
 
-          {/* STATE 2: IDLE (Pending) */}
           {!isProcessed && actionState === 'idle' && (
             <div className="flex gap-2">
               <button onClick={() => setActionState('approving')} className="flex-1 bg-green-50 text-green-700 font-bold py-3 px-4 rounded-lg border border-green-200 hover:bg-green-100 transition-colors">
@@ -194,7 +171,6 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
             </div>
           )}
 
-          {/* STATE 3: APPROVING OR REJECTING (The Sub-Menu) */}
           {!isProcessed && actionState !== 'idle' && (
             <div className={`p-4 rounded-xl border ${actionState === 'approving' ? 'bg-blue-50/50 border-blue-100' : 'bg-red-50/30 border-red-100'} animate-in fade-in slide-in-from-bottom-2`}>
               
@@ -203,9 +179,7 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
                 <button onClick={() => setActionState('idle')} className="text-xs font-bold text-blue-600 hover:underline">← Back</button>
               </div>
 
-              {/* Tag Buttons */}
               <div className="flex flex-wrap gap-2 mb-5">
-                {/* Aligned (Green) */}
                 {alignedCampaigns.map(c => {
                   const isSelected = selectedCampaigns.includes(c.name);
                   return (
@@ -214,7 +188,6 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
                     </button>
                   );
                 })}
-                {/* Unaligned (Gray) */}
                 {unalignedCampaigns.map(c => {
                   const isSelected = selectedCampaigns.includes(c.name);
                   return (
@@ -225,13 +198,13 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
                 })}
               </div>
 
-              {/* Rejection Specific UI */}
               {actionState === 'rejecting' && (
                 <div className="mb-5 pt-4 border-t border-red-100">
                   <label className="text-sm font-bold text-red-800 block mb-2">Reason for Rejection *</label>
                   <select value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className="w-full border border-red-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm mb-2">
                     <option value="" disabled>-- Select a reason --</option>
-                    {REJECTION_REASONS.map((r, i) => <option key={i} value={r}>{r}</option>)}
+                    {rejectionReasons.map((r) => <option key={r.id} value={r.reason}>{r.reason}</option>)}
+                    <option value="Other (Type custom reason)">Other (Type custom reason)</option>
                   </select>
                   {rejectReason === 'Other (Type custom reason)' && (
                     <input type="text" placeholder="Type specific reason..." value={customRejectReason} onChange={(e) => setCustomRejectReason(e.target.value)} className="w-full border border-red-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm" autoFocus />
@@ -239,7 +212,6 @@ export default function ExecutionCard({ execution, onUpdate }: { execution: any,
                 </div>
               )}
 
-              {/* Confirm Buttons */}
               {actionState === 'approving' ? (
                 <button onClick={confirmApprove} className="w-full bg-blue-400 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-sm transition-colors text-base">
                   Confirm & Approve Execution

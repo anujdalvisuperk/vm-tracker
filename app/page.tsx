@@ -22,7 +22,7 @@ export default function VMDashboard() {
 
   const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'missing' | 'review' | 'settings' | 'login'>('dashboard');
   const [dashboardTab, setDashboardTab] = useState<'general' | string>('general');
-  const [settingsTab, setSettingsTab] = useState<'stores' | 'campaigns'>('stores');
+  const [settingsTab, setSettingsTab] = useState<'stores' | 'campaigns' | 'reasons'>('stores');
   const [selectedMonth, setSelectedMonth] = useState('April');
 
   const [syncStartDate, setSyncStartDate] = useState('');
@@ -34,6 +34,7 @@ export default function VMDashboard() {
   const [allExecutions, setAllExecutions] = useState<any[]>([]);
   const [storesList, setStoresList] = useState<any[]>([]);
   const [campaignsList, setCampaignsList] = useState<any[]>([]);
+  const [reasonsList, setReasonsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const [queuePage, setQueuePage] = useState(1);
@@ -50,7 +51,10 @@ export default function VMDashboard() {
   const [campaignFilter, setCampaignFilter] = useState('all');
   const [missingCampaignFilter, setMissingCampaignFilter] = useState('all');
 
-  const [selectedPhoto, setSelectedPhoto] = useState<{ store: string; date: string; status: string; image: string; raw_text: string } | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<{ id: string; store: string; date: string; status: string; image: string; raw_text: string; rejection_reason?: string } | null>(null);
+  const [modalActionState, setModalActionState] = useState<'idle' | 'rejecting'>('idle');
+  const [modalRejectReason, setModalRejectReason] = useState('');
+  const [modalCustomRejectReason, setModalCustomRejectReason] = useState('');
 
   const [newStoreName, setNewStoreName] = useState('');
   const [newCampName, setNewCampName] = useState('');
@@ -59,6 +63,7 @@ export default function VMDashboard() {
   const [newCampDependencies, setNewCampDependencies] = useState<string[]>([]);
   const [newCampStart, setNewCampStart] = useState('');
   const [newCampEnd, setNewCampEnd] = useState('');
+  const [newReason, setNewReason] = useState('');
   
   const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
   const [editingStoreName, setEditingStoreName] = useState('');
@@ -80,6 +85,9 @@ export default function VMDashboard() {
     const { data: cData } = await supabase.from('campaigns').select('*').order('created_at', { ascending: false });
     if (cData) setCampaignsList(cData);
     
+    const { data: rData } = await supabase.from('rejection_reasons').select('*').order('id', { ascending: true });
+    if (rData) setReasonsList(rData);
+
     setIsLoading(false);
   };
 
@@ -194,6 +202,20 @@ export default function VMDashboard() {
     setEditingCampaign(null); fetchData();
   };
 
+  // --- REASON ACTIONS ---
+  const handleAddReason = async () => {
+    if (!newReason.trim()) return;
+    await supabase.from('rejection_reasons').insert([{ reason: newReason.trim() }]);
+    setNewReason(''); fetchData();
+  };
+
+  const handleDeleteReason = async (id: number) => {
+    if (confirm("Are you sure you want to delete this rejection reason?")) {
+      await supabase.from('rejection_reasons').delete().eq('id', id);
+      fetchData();
+    }
+  };
+
   const totalStoresCount = storesList.length;
   const alignedStoresCount = storesList.filter(s => s.aligned).length;
   const unalignedStoresCount = totalStoresCount - alignedStoresCount;
@@ -237,9 +259,8 @@ export default function VMDashboard() {
     return missing;
   }, [campaignsList, allExecutions, missingCampaignFilter, missingStartDate, missingEndDate]);
 
-  // --- RAW STORE-LEVEL MATRIX ENGINE ---
   const matrixData = useMemo(() => {
-    const rows: { campaign: string; store: string; w1: string; w2: string; w3: string; w4: string; totalPayout: number }[] = [];
+    const rows: { campaign: string; store: string; w1: any; w2: any; w3: any; w4: any; totalPayout: number }[] = [];
 
     const getWeekStatusForCamp = (storeName: string, campName: string, weekNum: number) => {
       const storeExecs = allExecutions.filter(e => 
@@ -254,10 +275,14 @@ export default function VMDashboard() {
         if (weekNum === 4 && day >= 22) return true;
         return false;
       });
-      if (!execForWeek) return "Missed";
-      if (execForWeek.status === 'approved') return "Approved";
-      if (execForWeek.status === 'rejected') return "Rejected";
-      return "Pending";
+      
+      if (!execForWeek) return { status: 'Missed', execution: null };
+      
+      let statusStr = 'Pending';
+      if (execForWeek.status === 'approved') statusStr = 'Approved';
+      if (execForWeek.status === 'rejected') statusStr = 'Rejected';
+      
+      return { status: statusStr, execution: execForWeek };
     };
 
     campaignsList.forEach(camp => {
@@ -271,13 +296,13 @@ export default function VMDashboard() {
         let approvedCount = 0;
         const weeks = [w1, w2, w3, w4];
         
-        weeks.forEach((status, index) => {
+        weeks.forEach((weekObj, index) => {
           const weekNum = index + 1;
-          if (status === 'Approved') {
+          if (weekObj.status === 'Approved') {
             let depsSatisfied = true;
             const deps = camp.dependencies || [];
             deps.forEach((depCampName: string) => {
-              if (getWeekStatusForCamp(storeName, depCampName, weekNum) !== 'Approved') depsSatisfied = false;
+              if (getWeekStatusForCamp(storeName, depCampName, weekNum).status !== 'Approved') depsSatisfied = false;
             });
             if (depsSatisfied) approvedCount++;
           }
@@ -295,7 +320,6 @@ export default function VMDashboard() {
     return rows;
   }, [campaignsList, allExecutions]);
 
-  // --- NEW: GENERAL TAB EXECUTIVE SUMMARY ENGINE ---
   const generalMatrixData = useMemo(() => {
     return campaignsList.map(camp => {
       const campRows = matrixData.filter(r => r.campaign === camp.name);
@@ -303,11 +327,9 @@ export default function VMDashboard() {
 
       const calcWeek = (weekKey: 'w1'|'w2'|'w3'|'w4') => {
         if (enrolledCount === 0) return { sub: 0, app: 0, rej: 0 };
-        
-        const submitted = campRows.filter(r => r[weekKey] !== 'Missed').length;
-        const approved = campRows.filter(r => r[weekKey] === 'Approved').length;
-        const rejected = campRows.filter(r => r[weekKey] === 'Rejected').length;
-        
+        const submitted = campRows.filter(r => r[weekKey].status !== 'Missed').length;
+        const approved = campRows.filter(r => r[weekKey].status === 'Approved').length;
+        const rejected = campRows.filter(r => r[weekKey].status === 'Rejected').length;
         return {
           sub: Math.round((submitted / enrolledCount) * 100),
           app: Math.round((approved / enrolledCount) * 100),
@@ -316,19 +338,13 @@ export default function VMDashboard() {
       };
 
       return {
-        id: camp.id,
-        campaign: camp.name,
-        enrolled: enrolledCount,
-        w1: calcWeek('w1'),
-        w2: calcWeek('w2'),
-        w3: calcWeek('w3'),
-        w4: calcWeek('w4'),
+        id: camp.id, campaign: camp.name, enrolled: enrolledCount,
+        w1: calcWeek('w1'), w2: calcWeek('w2'), w3: calcWeek('w3'), w4: calcWeek('w4'),
         totalLiability: campRows.reduce((sum, r) => sum + r.totalPayout, 0)
       };
     });
   }, [campaignsList, matrixData]);
 
-  // Apply Dashboard Tab Filter (Only used when rendering a specific campaign tab)
   const filteredDashboardData = useMemo(() => {
     if (dashboardTab === 'general') return matrixData;
     return matrixData.filter(row => row.campaign === dashboardTab);
@@ -343,19 +359,14 @@ export default function VMDashboard() {
   const paginatedHistory = filteredReviewData.slice((historyPage - 1) * ITEMS_PER_PAGE, historyPage * ITEMS_PER_PAGE);
   const paginatedStores = storesList.slice((storesPage - 1) * ITEMS_PER_PAGE, storesPage * ITEMS_PER_PAGE);
   const paginatedCampaigns = campaignsList.slice((campaignsPage - 1) * ITEMS_PER_PAGE, campaignsPage * ITEMS_PER_PAGE);
-  
-  // Slicing for both view types
   const paginatedGeneralMatrix = generalMatrixData.slice((matrixPage - 1) * ITEMS_PER_PAGE, matrixPage * ITEMS_PER_PAGE);
   const paginatedMatrix = filteredDashboardData.slice((matrixPage - 1) * ITEMS_PER_PAGE, matrixPage * ITEMS_PER_PAGE);
 
   const exportMatrixToCSV = () => {
     let csvContent = '"Campaign Name","Store Name","Week 1","Week 2","Week 3","Week 4","Total Payout"\n';
-
-    // The CSV will always export the raw store-by-store data, even if viewing the General summary
     filteredDashboardData.forEach(row => {
-        csvContent += `"${row.campaign}","${row.store}","${row.w1}","${row.w2}","${row.w3}","${row.w4}","${row.totalPayout}"\n`;
+        csvContent += `"${row.campaign}","${row.store}","${row.w1.status}","${row.w2.status}","${row.w3.status}","${row.w4.status}","${row.totalPayout}"\n`;
     });
-
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -368,7 +379,6 @@ export default function VMDashboard() {
     URL.revokeObjectURL(url);
   };
 
-  // UI Helper for the Executive Summary Cells
   const renderWeekCell = (week: {sub: number, app: number, rej: number}) => (
     <div className="flex flex-col gap-0.5 text-[10px] w-24 mx-auto bg-slate-50 p-1.5 rounded-md border border-slate-100">
       <div className="flex justify-between items-center"><span className="text-slate-400 font-bold">SUB</span><span className="font-black text-blue-600">{week.sub}%</span></div>
@@ -376,6 +386,35 @@ export default function VMDashboard() {
       <div className="flex justify-between items-center"><span className="text-slate-400 font-bold">REJ</span><span className="font-black text-red-600">{week.rej}%</span></div>
     </div>
   );
+
+  const handleModalApprove = async () => {
+    if (!selectedPhoto) return;
+    const { error } = await supabase.from('executions').update({ status: 'approved', rejection_reason: null }).eq('id', selectedPhoto.id);
+    if (!error) {
+      setSelectedPhoto({ ...selectedPhoto, status: 'Approved', rejection_reason: undefined });
+      fetchData();
+    } else alert(error.message);
+  };
+
+  const handleModalReject = async () => {
+    if (!selectedPhoto || !modalRejectReason) return alert("Please select a reason");
+    const finalReason = modalRejectReason === 'Other (Type custom reason)' ? modalCustomRejectReason : modalRejectReason;
+    const { error } = await supabase.from('executions').update({ status: 'rejected', rejection_reason: finalReason }).eq('id', selectedPhoto.id);
+    if (!error) {
+      setSelectedPhoto({ ...selectedPhoto, status: 'Rejected', rejection_reason: finalReason });
+      setModalActionState('idle');
+      fetchData();
+    } else alert(error.message);
+  };
+
+  const handleModalDelete = async () => {
+    if (!selectedPhoto) return;
+    if (confirm("Are you sure you want to permanently delete this photo?")) {
+      await supabase.from('executions').delete().eq('id', selectedPhoto.id);
+      setSelectedPhoto(null);
+      fetchData();
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans relative">
@@ -411,7 +450,6 @@ export default function VMDashboard() {
         {isAuthenticated && <div className="p-4 border-t border-slate-800"><button onClick={handleLogout} className="w-full text-xs text-slate-400 hover:text-white transition-colors text-left px-4 py-2">← Logout</button></div>}
       </div>
 
-      {/* MAIN CONTENT AREA */}
       <div className="flex-1 p-8 overflow-y-auto z-0">
         
         {mainView === 'login' && (
@@ -425,7 +463,7 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* VIEW: ANALYTICS DASHBOARD */}
+        {/* DASHBOARD TAB */}
         {mainView === 'dashboard' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500 flex flex-col h-full">
             
@@ -450,8 +488,6 @@ export default function VMDashboard() {
             </div>
             
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-              
-              {/* --- TAB VIEW 1: EXECUTIVE SUMMARY (General) --- */}
               {dashboardTab === 'general' ? (
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -484,8 +520,6 @@ export default function VMDashboard() {
                   </tbody>
                 </table>
               ) : (
-
-              /* --- TAB VIEW 2: INDIVIDUAL CAMPAIGN (Store Level) --- */
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-500 uppercase tracking-widest">
@@ -503,19 +537,42 @@ export default function VMDashboard() {
                     ) : (
                       paginatedMatrix.map((row, i) => {
                         const getStatusColor = (status: string) => {
-                          if (status === 'Approved') return 'bg-green-100 text-green-700 font-bold';
-                          if (status === 'Rejected') return 'bg-red-100 text-red-700 font-bold';
+                          if (status === 'Approved') return 'bg-green-100 text-green-700 font-bold hover:bg-green-200 cursor-pointer';
+                          if (status === 'Rejected') return 'bg-red-100 text-red-700 font-bold hover:bg-red-200 cursor-pointer';
                           if (status === 'Missed') return 'bg-slate-100 text-slate-500 font-semibold italic';
-                          return 'bg-amber-100 text-amber-700 font-bold';
+                          return 'bg-amber-100 text-amber-700 font-bold hover:bg-amber-200 cursor-pointer';
+                        };
+
+                        const handlePillClick = (weekData: any) => {
+                          if (weekData.execution) {
+                            setSelectedPhoto({
+                              id: weekData.execution.id,
+                              store: weekData.execution.store_name || weekData.execution.extracted_store,
+                              status: weekData.status,
+                              image: weekData.execution.image_url,
+                              date: new Date(weekData.execution.submission_date).toLocaleString(),
+                              raw_text: weekData.execution.raw_text,
+                              rejection_reason: weekData.execution.rejection_reason
+                            });
+                            setModalActionState('idle'); 
+                          }
                         };
 
                         return (
                           <tr key={i} className="hover:bg-slate-50 transition-colors">
                             <td className="p-4 font-medium text-slate-600">{row.store}</td>
-                            <td className="p-4 text-center"><span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 ${getStatusColor(row.w1)}`}>{row.w1}</span></td>
-                            <td className="p-4 text-center"><span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 ${getStatusColor(row.w2)}`}>{row.w2}</span></td>
-                            <td className="p-4 text-center"><span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 ${getStatusColor(row.w3)}`}>{row.w3}</span></td>
-                            <td className="p-4 text-center"><span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 ${getStatusColor(row.w4)}`}>{row.w4}</span></td>
+                            <td className="p-4 text-center">
+                              <span onClick={() => handlePillClick(row.w1)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w1.status)}`}>{row.w1.status}</span>
+                            </td>
+                            <td className="p-4 text-center">
+                              <span onClick={() => handlePillClick(row.w2)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w2.status)}`}>{row.w2.status}</span>
+                            </td>
+                            <td className="p-4 text-center">
+                              <span onClick={() => handlePillClick(row.w3)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w3.status)}`}>{row.w3.status}</span>
+                            </td>
+                            <td className="p-4 text-center">
+                              <span onClick={() => handlePillClick(row.w4)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w4.status)}`}>{row.w4.status}</span>
+                            </td>
                             <td className="p-4 text-right font-black text-green-600">₹{row.totalPayout}</td>
                           </tr>
                         );
@@ -525,7 +582,6 @@ export default function VMDashboard() {
                 </table>
               )}
 
-              {/* PAGINATION SWITCHER based on tab */}
               {dashboardTab === 'general' && generalMatrixData.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={generalMatrixData.length} page={matrixPage} setPage={setMatrixPage} /></div>}
               {dashboardTab !== 'general' && filteredDashboardData.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={filteredDashboardData.length} page={matrixPage} setPage={setMatrixPage} /></div>}
             </div>
@@ -542,7 +598,6 @@ export default function VMDashboard() {
                 <button onClick={handleSyncSlack} disabled={isLoading} className="flex items-center gap-2 bg-blue-50 text-blue-700 border border-blue-200 px-4 py-1.5 rounded-lg text-sm font-bold hover:bg-blue-100 shadow-sm disabled:opacity-50 h-[34px]"><span className={`${isLoading && 'animate-spin'}`}>↻</span> Pull</button>
               </div>
             </div>
-
             {isLoading && pendingExecutions.length === 0 ? (
                <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>
             ) : pendingExecutions.length === 0 ? (
@@ -553,7 +608,8 @@ export default function VMDashboard() {
             ) : (
               <div>
                 <div className="space-y-6">
-                  {paginatedQueue.map((exec) => <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchData} />)}
+                  {/* PASSED REASONSLIST PROP HERE */}
+                  {paginatedQueue.map((exec) => <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchData} rejectionReasons={reasonsList} />)}
                 </div>
                 <Pagination total={pendingExecutions.length} page={queuePage} setPage={setQueuePage} />
               </div>
@@ -566,7 +622,6 @@ export default function VMDashboard() {
             <div className="flex justify-between items-end mb-8">
               <div><h2 className="text-3xl font-bold text-slate-900 mb-1">Missing Photos</h2><p className="text-slate-500">Stores enrolled in campaigns that have not submitted a photo.</p></div>
             </div>
-
             <div className="mb-6 bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-end gap-4">
               <div className="flex-1 min-w-[200px]">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Filter by Campaign</label>
@@ -578,7 +633,6 @@ export default function VMDashboard() {
               <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Start Date</label><input type="date" value={missingStartDate} onChange={(e) => setMissingStartDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
               <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">End Date</label><input type="date" value={missingEndDate} onChange={(e) => setMissingEndDate(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
             </div>
-
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -667,7 +721,10 @@ export default function VMDashboard() {
                           </span>
                         </td>
                         <td className="p-4 text-right">
-                          <button onClick={() => setSelectedPhoto({ store: row.store_name || row.extracted_store || 'Unmapped', status: row.status === 'pending_admin' ? 'In Review' : row.status, image: row.image_url, date: new Date(row.submission_date).toLocaleString(), raw_text: row.raw_text })} className="text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors">View</button>
+                          <button onClick={() => {
+                            setSelectedPhoto({ id: row.id, store: row.store_name || row.extracted_store || 'Unmapped', status: row.status === 'pending_admin' ? 'Pending' : row.status === 'approved' ? 'Approved' : 'Rejected', image: row.image_url, date: new Date(row.submission_date).toLocaleString(), raw_text: row.raw_text, rejection_reason: row.rejection_reason });
+                            setModalActionState('idle');
+                          }} className="text-sm font-semibold text-blue-600 hover:text-blue-800 transition-colors">View</button>
                         </td>
                       </tr>
                     ))
@@ -684,17 +741,17 @@ export default function VMDashboard() {
         {/* MASTER SETTINGS */}
         {mainView === 'settings' && (
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
-            <div className="mb-8"><h2 className="text-3xl font-bold text-slate-900">Master Settings</h2><p className="text-slate-500 mt-1">Manage Store Roster and Active Campaigns.</p></div>
+            <div className="mb-8"><h2 className="text-3xl font-bold text-slate-900">Master Settings</h2><p className="text-slate-500 mt-1">Manage Store Roster, Campaigns, and Rejection Reasons.</p></div>
 
+            {/* TAB SELECTORS */}
             <div className="flex space-x-1 bg-slate-200/50 p-1 rounded-xl mb-6 w-fit">
               <button onClick={() => setSettingsTab('stores')} className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${settingsTab === 'stores' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>🏢 Manage Stores</button>
               <button onClick={() => setSettingsTab('campaigns')} className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${settingsTab === 'campaigns' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>📢 Manage Campaigns</button>
+              <button onClick={() => setSettingsTab('reasons')} className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${settingsTab === 'reasons' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>❌ Rejection Reasons</button>
             </div>
 
-            {/* TAB: STORES */}
             {settingsTab === 'stores' && (
               <div className="space-y-6">
-                
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                   <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Stores</p>
@@ -745,26 +802,18 @@ export default function VMDashboard() {
                       {paginatedStores.map(store => (
                         <tr key={store.id} className="hover:bg-slate-50">
                           {editingStoreId === store.id ? (
-                            <td className="p-3">
-                              <input type="text" value={editingStoreName} onChange={(e) => setEditingStoreName(e.target.value)} className="w-full border border-blue-300 rounded-md px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 shadow-inner" autoFocus />
-                            </td>
-                          ) : (
-                            <td className="p-4 font-medium text-slate-800">{store.name}</td>
-                          )}
-
+                            <td className="p-3"><input type="text" value={editingStoreName} onChange={(e) => setEditingStoreName(e.target.value)} className="w-full border border-blue-300 rounded-md px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 shadow-inner" autoFocus /></td>
+                          ) : (<td className="p-4 font-medium text-slate-800">{store.name}</td>)}
                           <td className="p-4 text-right flex justify-end gap-2">
                             {editingStoreId === store.id ? (
                               <button onClick={() => saveEditStore(store.id, store.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm">💾 Save</button>
                             ) : (
                               <button onClick={() => startEditStore(store)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors">✏️ Edit</button>
                             )}
-
                             <button onClick={() => toggleStoreAlignment(store.id, store.aligned)} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors border ${store.aligned ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'}`}>
                               {store.aligned ? '✓ Aligned' : '✕ Not Aligned'}
                             </button>
-                            <button onClick={() => handleDeleteStore(store.id, store.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors">
-                              🗑️ Delete
-                            </button>
+                            <button onClick={() => handleDeleteStore(store.id, store.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors">🗑️ Delete</button>
                           </td>
                         </tr>
                       ))}
@@ -775,7 +824,6 @@ export default function VMDashboard() {
               </div>
             )}
 
-            {/* TAB: CAMPAIGNS */}
             {settingsTab === 'campaigns' && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="md:col-span-1 bg-white p-6 border border-slate-200 rounded-xl shadow-sm h-fit">
@@ -787,7 +835,6 @@ export default function VMDashboard() {
                       <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">Start Date</label><input type="date" value={newCampStart} onChange={(e) => setNewCampStart(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                       <div><label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">End Date</label><input type="date" value={newCampEnd} onChange={(e) => setNewCampEnd(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                     </div>
-
                     {campaignsList.length > 0 && (
                       <div className="pt-2 border-t border-slate-100">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 block">🔗 Required Co-Campaigns</label>
@@ -802,7 +849,6 @@ export default function VMDashboard() {
                         </div>
                       </div>
                     )}
-
                     <div className="pt-2 border-t border-slate-100 mt-4">
                       <div className="flex justify-between items-center mb-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Assign Stores</label>
@@ -821,18 +867,15 @@ export default function VMDashboard() {
                     <button onClick={handleAddCampaign} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 transition-colors mt-4">Create Campaign</button>
                   </div>
                 </div>
-
                 <div className="md:col-span-2 space-y-4">
                   {campaignsList.length === 0 && <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-500">No campaigns created yet.</div>}
                   {paginatedCampaigns.map(campaign => (
                     <div key={campaign.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden group">
-                      
                       {campaign.end_date && new Date(campaign.end_date) < new Date() ? (
                         <div className="absolute top-0 right-0 bg-slate-200 text-slate-600 text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-widest">Expired</div>
                       ) : (
                         <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-widest shadow-sm">Live Now</div>
                       )}
-
                       <div className="flex justify-between items-start mb-4 mt-2">
                         <div>
                           <h4 className="text-lg font-bold text-slate-900">{campaign.name}</h4>
@@ -853,14 +896,9 @@ export default function VMDashboard() {
                           <span key={i} className="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-1 rounded shadow-sm">{s}</span>
                         ))}
                       </div>
-
                       <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
-                        <button onClick={() => setEditingCampaign(campaign)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors flex items-center gap-2">
-                          ✏️ Edit
-                        </button>
-                        <button onClick={() => handleDeleteCampaign(campaign.id, campaign.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-2">
-                          🗑️ Delete
-                        </button>
+                        <button onClick={() => setEditingCampaign(campaign)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors flex items-center gap-2">✏️ Edit</button>
+                        <button onClick={() => handleDeleteCampaign(campaign.id, campaign.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-2">🗑️ Delete</button>
                       </div>
                     </div>
                   ))}
@@ -868,6 +906,34 @@ export default function VMDashboard() {
                 </div>
               </div>
             )}
+
+            {/* TAB: REJECTION REASONS */}
+            {settingsTab === 'reasons' && (
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm max-w-3xl">
+                 <div className="p-6 border-b border-slate-100 bg-slate-50">
+                    <h3 className="text-lg font-bold text-slate-900 mb-2">Dynamic Rejection Reasons</h3>
+                    <p className="text-sm text-slate-500 mb-4">Add or remove standardized reasons that admins can choose from when rejecting photos.</p>
+                    <div className="flex gap-2">
+                      <input type="text" value={newReason} onChange={(e) => setNewReason(e.target.value)} placeholder="e.g. Blurry photo" className="flex-1 border border-slate-200 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-red-500 outline-none" />
+                      <button onClick={handleAddReason} className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-800 transition-colors">Add Reason</button>
+                    </div>
+                 </div>
+                 <table className="w-full text-left border-collapse">
+                    <tbody className="divide-y divide-slate-100">
+                      {reasonsList.length === 0 && <tr><td className="p-8 text-center text-slate-500">No rejection reasons found.</td></tr>}
+                      {reasonsList.map(r => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="p-4 font-medium text-slate-800">{r.reason}</td>
+                          <td className="p-4 text-right">
+                            <button onClick={() => handleDeleteReason(r.id)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors">🗑️ Delete</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                 </table>
+              </div>
+            )}
+
           </div>
         )}
       </div>
@@ -875,27 +941,19 @@ export default function VMDashboard() {
       {/* --- EDIT CAMPAIGN MODAL --- */}
       {editingCampaign && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh]">
+           {/* ... existing campaign modal code ... */}
+           <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh]">
             <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">✏️ Edit Campaign</h3>
               <button onClick={() => setEditingCampaign(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-colors">✕</button>
             </div>
-            
             <div className="p-6 overflow-y-auto space-y-5">
-               <div>
-                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Campaign Name</label>
-                 <input type="text" value={editingCampaign.name} onChange={e => setEditingCampaign({...editingCampaign, name: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
-               </div>
-               <div>
-                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Weekly Payout (₹)</label>
-                 <input type="number" value={editingCampaign.payout} onChange={e => setEditingCampaign({...editingCampaign, payout: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
-               </div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Campaign Name</label><input type="text" value={editingCampaign.name} onChange={e => setEditingCampaign({...editingCampaign, name: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Weekly Payout (₹)</label><input type="number" value={editingCampaign.payout} onChange={e => setEditingCampaign({...editingCampaign, payout: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                <div className="grid grid-cols-2 gap-4">
                  <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">Start Date</label><input type="date" value={editingCampaign.start_date || ''} onChange={e => setEditingCampaign({...editingCampaign, start_date: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                  <div><label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1">End Date</label><input type="date" value={editingCampaign.end_date || ''} onChange={e => setEditingCampaign({...editingCampaign, end_date: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                </div>
-
-               {/* Dependencies Edit */}
                <div className="pt-4 border-t border-slate-100">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">🔗 Required Co-Campaigns</label>
                   <div className="max-h-24 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 space-y-1">
@@ -907,8 +965,6 @@ export default function VMDashboard() {
                      ))}
                   </div>
                </div>
-
-               {/* Stores Edit */}
                <div className="pt-4 border-t border-slate-100">
                   <div className="flex justify-between items-center mb-2">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Assigned Stores</label>
@@ -924,7 +980,6 @@ export default function VMDashboard() {
                   </div>
                </div>
             </div>
-
             <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
                <button onClick={() => setEditingCampaign(null)} className="px-5 py-2.5 rounded-lg text-sm font-bold text-slate-600 bg-white border border-slate-300 hover:bg-slate-50 transition-colors">Cancel</button>
                <button onClick={saveEditCampaign} className="px-5 py-2.5 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition-colors">Save Changes</button>
@@ -933,25 +988,73 @@ export default function VMDashboard() {
         </div>
       )}
 
-      {/* PHOTO VIEWER MODAL */}
+      {/* --- UPGRADED PHOTO VIEWER & EDITOR MODAL --- */}
       {selectedPhoto && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-4xl w-full flex flex-col">
+            
             <div className="p-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
               <div>
                 <h3 className="font-bold text-lg text-slate-900">{selectedPhoto.store}</h3>
-                <p className="text-sm text-slate-500 font-medium flex items-center gap-2 mt-1">
-                  {selectedPhoto.date} • 
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider ${selectedPhoto.status === 'approved' ? 'bg-green-500' : selectedPhoto.status === 'rejected' ? 'bg-red-500' : 'bg-amber-400 text-amber-900'}`}>{selectedPhoto.status}</span>
-                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-sm text-slate-500 font-medium">{selectedPhoto.date}</p>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase tracking-wider ${selectedPhoto.status === 'Approved' ? 'bg-green-500' : selectedPhoto.status === 'Rejected' ? 'bg-red-500' : 'bg-amber-400 text-amber-900'}`}>
+                    {selectedPhoto.status}
+                  </span>
+                </div>
+                {selectedPhoto.status === 'Rejected' && selectedPhoto.rejection_reason && (
+                  <p className="text-sm font-bold text-red-600 mt-1">Reason: <span className="font-medium text-slate-600">{selectedPhoto.rejection_reason}</span></p>
+                )}
                 <p className="text-sm text-slate-700 italic mt-2">&quot;{selectedPhoto.raw_text}&quot;</p>
               </div>
-              <button onClick={() => setSelectedPhoto(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-colors">✕</button>
+              <button onClick={() => { setSelectedPhoto(null); setModalActionState('idle'); }} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-colors">✕</button>
             </div>
+            
             <div className="bg-slate-100 flex items-center justify-center p-4">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={selectedPhoto.image} alt="Execution Photo" className="max-h-[70vh] object-contain rounded border border-slate-200 shadow-sm" />
+              <img src={selectedPhoto.image} alt="Execution Photo" className="max-h-[60vh] object-contain rounded border border-slate-200 shadow-sm" />
             </div>
+
+            {selectedPhoto.id && (
+              <div className="p-4 border-t border-slate-100 bg-white">
+                {modalActionState === 'idle' ? (
+                  <div className="flex justify-between items-center">
+                    <button onClick={handleModalDelete} className="px-4 py-2 rounded-lg text-sm font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-2">
+                      🗑️ Delete Execution
+                    </button>
+                    <div>
+                      {selectedPhoto.status === 'Approved' ? (
+                        <button onClick={() => setModalActionState('rejecting')} className="px-5 py-2 rounded-lg text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm">
+                          Change to Rejected
+                        </button>
+                      ) : (
+                        <button onClick={handleModalApprove} className="px-5 py-2 rounded-lg text-sm font-bold text-white bg-green-600 hover:bg-green-700 transition-colors shadow-sm">
+                          Change to Approved
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-red-50 border border-red-100 p-4 rounded-xl animate-in fade-in slide-in-from-right-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <label className="text-sm font-bold text-red-800">Reason for Rejection *</label>
+                      <button onClick={() => setModalActionState('idle')} className="text-xs font-bold text-blue-600 hover:underline">← Cancel</button>
+                    </div>
+                    <select value={modalRejectReason} onChange={(e) => setModalRejectReason(e.target.value)} className="w-full border border-red-200 rounded-lg px-4 py-2 text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm mb-3">
+                      <option value="" disabled>-- Select a reason --</option>
+                      {reasonsList.map((r) => <option key={r.id} value={r.reason}>{r.reason}</option>)}
+                      <option value="Other (Type custom reason)">Other (Type custom reason)</option>
+                    </select>
+                    {modalRejectReason === 'Other (Type custom reason)' && (
+                      <input type="text" placeholder="Type specific reason..." value={modalCustomRejectReason} onChange={(e) => setModalCustomRejectReason(e.target.value)} className="w-full border border-red-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm mb-3" autoFocus />
+                    )}
+                    <button onClick={handleModalReject} className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 rounded-lg shadow-sm transition-colors text-sm">
+                      Confirm Rejection
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

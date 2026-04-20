@@ -15,12 +15,32 @@ const Pagination = ({ total, page, setPage, perPage = 10 }: { total: number, pag
   );
 };
 
+// CSV parsing helper to handle commas inside quotes safely
+const parseCSVRow = (str: string) => {
+    const result = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < str.length; i++) {
+        if (str[i] === '"') {
+            inQuotes = !inQuotes;
+        } else if (str[i] === ',' && !inQuotes) {
+            result.push(cur.trim());
+            cur = '';
+        } else {
+            cur += str[i];
+        }
+    }
+    result.push(cur.trim());
+    return result;
+};
+
 export default function VMDashboard() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'missing' | 'review' | 'settings' | 'login'>('dashboard');
+  // NEW: Added 'pazo' view
+  const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'pazo' | 'missing' | 'review' | 'settings' | 'login'>('dashboard');
   const [dashboardTab, setDashboardTab] = useState<'general' | string>('general');
   const [settingsTab, setSettingsTab] = useState<'stores' | 'campaigns' | 'reasons'>('stores');
   const [selectedMonth, setSelectedMonth] = useState('April');
@@ -38,6 +58,7 @@ export default function VMDashboard() {
   const [isLoading, setIsLoading] = useState(false);
 
   const [queuePage, setQueuePage] = useState(1);
+  const [pazoPage, setPazoPage] = useState(1); // NEW: Pagination for PAZO
   const [missingPage, setMissingPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
   const [storesPage, setStoresPage] = useState(1);
@@ -70,6 +91,7 @@ export default function VMDashboard() {
   const [editingCampaign, setEditingCampaign] = useState<any | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pazoFileInputRef = useRef<HTMLInputElement>(null); // NEW: Ref for PAZO CSV
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -94,7 +116,7 @@ export default function VMDashboard() {
   useEffect(() => { fetchData(); }, [mainView]);
 
   useEffect(() => {
-    setQueuePage(1); setMissingPage(1); setHistoryPage(1); setStoresPage(1); setCampaignsPage(1); setMatrixPage(1);
+    setQueuePage(1); setPazoPage(1); setMissingPage(1); setHistoryPage(1); setStoresPage(1); setCampaignsPage(1); setMatrixPage(1);
   }, [mainView, settingsTab, reviewFilter, storeFilter, campaignFilter, missingCampaignFilter, searchQuery, dashboardTab]);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -112,6 +134,90 @@ export default function VMDashboard() {
       await fetch('/api/slack-sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ startDate: syncStartDate, endDate: syncEndDate }) });
       await fetchData();
     } catch (error) { console.error("Sync failed:", error); }
+  };
+
+  // --- NEW: PAZO CSV LOGIC ---
+  const handlePazoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsLoading(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+        try {
+            const text = event.target?.result as string;
+            const lines = text.split('\n').filter(l => l.trim());
+            if (lines.length < 2) throw new Error("CSV is empty or invalid");
+
+            const headers = parseCSVRow(lines[0]);
+            const storeIdx = headers.findIndex(h => h.includes('Store Name'));
+            const dateIdx = headers.findIndex(h => h.includes('Submitted Dat')); // Handle shortened header from screenshot
+            const timeIdx = headers.findIndex(h => h.includes('Submitted Tim')); // Handle shortened header
+            const imgIdx = headers.findIndex(h => h.includes('Image 1'));
+
+            if (storeIdx === -1 || dateIdx === -1 || timeIdx === -1 || imgIdx === -1) {
+                throw new Error("CSV is missing required columns. Please ensure Store Name, Submitted Date, Submitted Time, and Image 1 are present.");
+            }
+
+            const newExecutions = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const row = parseCSVRow(lines[i]);
+                if (row.length <= Math.max(storeIdx, dateIdx, timeIdx, imgIdx)) continue;
+
+                const storeName = row[storeIdx];
+                const dateStr = row[dateIdx];
+                const timeStr = row[timeIdx];
+                const imgUrl = row[imgIdx];
+
+                if (!imgUrl || !imgUrl.startsWith('http')) continue;
+
+                // Safely merge date and time into an ISO format (fallback to now if parsing fails completely)
+                let isoDate = new Date().toISOString();
+                try {
+                    const [dd, mm, yyyy] = dateStr.split('-');
+                    const timeMatch = timeStr.match(/(\d+):(\d+)\s*(am|pm)/i);
+                    if (timeMatch && yyyy && mm && dd) {
+                        let hrs = parseInt(timeMatch[1]);
+                        const mins = parseInt(timeMatch[2]);
+                        const isPm = timeMatch[3].toLowerCase() === 'pm';
+                        if (isPm && hrs < 12) hrs += 12;
+                        if (!isPm && hrs === 12) hrs = 0;
+                        const dateObj = new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd), hrs, mins);
+                        isoDate = dateObj.toISOString();
+                    }
+                } catch (e) { console.warn("Date parse error for row", i); }
+
+                newExecutions.push({
+                    slack_message_id: `pazo-${Date.now()}-${i}`,
+                    raw_text: `PAZO Import`,
+                    extracted_store: storeName,
+                    image_url: imgUrl,
+                    status: 'pending_admin',
+                    submission_date: isoDate
+                });
+            }
+
+            if (newExecutions.length > 0) {
+                for (let i = 0; i < newExecutions.length; i += 100) {
+                    const chunk = newExecutions.slice(i, i + 100);
+                    const { error } = await supabase.from('executions').insert(chunk);
+                    if (error) console.error("Supabase insert error:", error);
+                }
+                alert(`Successfully imported ${newExecutions.length} PAZO executions!`);
+            } else {
+                alert("No valid image rows found in the CSV.");
+            }
+            
+            fetchData();
+        } catch (err: any) {
+            alert(err.message);
+        } finally {
+            setIsLoading(false);
+            if (pazoFileInputRef.current) pazoFileInputRef.current.value = '';
+        }
+    };
+    reader.readAsText(file);
   };
 
   const handleAddSingleStore = async () => {
@@ -182,13 +288,11 @@ export default function VMDashboard() {
   };
 
   const handleAddCampaign = async () => {
-    // Fixed validation to allow 0 payout
     if (!newCampName.trim() || newCampPayout === '' || !newCampStart || !newCampEnd) return alert("Please fill all required campaign fields including dates.");
     await supabase.from('campaigns').insert([{ name: newCampName, payout: Number(newCampPayout), stores: newCampStores, dependencies: newCampDependencies, start_date: newCampStart, end_date: newCampEnd }]);
     setNewCampName(''); setNewCampPayout(''); setNewCampStores([]); setNewCampDependencies([]); setNewCampStart(''); setNewCampEnd(''); fetchData();
   };
 
-  // NEW: Clone Campaign Logic
   const startDuplicateCampaign = (camp: any) => {
     setNewCampName(`${camp.name} (Copy)`);
     setNewCampPayout(camp.payout);
@@ -206,7 +310,6 @@ export default function VMDashboard() {
   };
 
   const saveEditCampaign = async () => {
-    // Fixed validation to allow 0 payout
     if (!editingCampaign.name.trim() || editingCampaign.payout === '' || !editingCampaign.start_date || !editingCampaign.end_date) return alert("Please ensure all fields are filled out.");
     await supabase.from('campaigns').update({
       name: editingCampaign.name, payout: Number(editingCampaign.payout), start_date: editingCampaign.start_date, end_date: editingCampaign.end_date,
@@ -366,7 +469,13 @@ export default function VMDashboard() {
     return filteredDashboardData.reduce((sum, row) => sum + row.totalPayout, 0);
   }, [filteredDashboardData]);
 
-  const paginatedQueue = pendingExecutions.slice((queuePage - 1) * ITEMS_PER_PAGE, queuePage * ITEMS_PER_PAGE);
+  // --- SEPARATE QUEUES FOR SLACK vs PAZO ---
+  const slackPendingExecutions = pendingExecutions.filter(e => e.raw_text !== 'PAZO Import');
+  const pazoPendingExecutions = pendingExecutions.filter(e => e.raw_text === 'PAZO Import');
+
+  const paginatedQueue = slackPendingExecutions.slice((queuePage - 1) * ITEMS_PER_PAGE, queuePage * ITEMS_PER_PAGE);
+  const paginatedPazoQueue = pazoPendingExecutions.slice((pazoPage - 1) * ITEMS_PER_PAGE, pazoPage * ITEMS_PER_PAGE);
+  
   const paginatedMissing = missingExecutions.slice((missingPage - 1) * ITEMS_PER_PAGE, missingPage * ITEMS_PER_PAGE);
   const paginatedHistory = filteredReviewData.slice((historyPage - 1) * ITEMS_PER_PAGE, historyPage * ITEMS_PER_PAGE);
   const paginatedStores = storesList.slice((storesPage - 1) * ITEMS_PER_PAGE, storesPage * ITEMS_PER_PAGE);
@@ -445,8 +554,15 @@ export default function VMDashboard() {
             <>
               <button onClick={() => setMainView('queue')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'queue' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
                 <div className="flex items-center gap-3"><span>📋 Admin Queue</span></div>
-                {pendingExecutions.length > 0 && <span className="bg-amber-500 text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-full">{pendingExecutions.length}</span>}
+                {slackPendingExecutions.length > 0 && <span className="bg-amber-500 text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-full">{slackPendingExecutions.length}</span>}
               </button>
+
+              {/* NEW PAZO TAB */}
+              <button onClick={() => setMainView('pazo')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'pazo' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                <div className="flex items-center gap-3"><span>📤 PAZO Import</span></div>
+                {pazoPendingExecutions.length > 0 && <span className="bg-indigo-400 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{pazoPendingExecutions.length}</span>}
+              </button>
+
               <button onClick={() => setMainView('missing')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'missing' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
                 <div className="flex items-center gap-3"><span>⚠️ Missing Photos</span></div>
                 {missingExecutions.length > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{missingExecutions.length}</span>}
@@ -478,7 +594,6 @@ export default function VMDashboard() {
         {/* DASHBOARD TAB */}
         {mainView === 'dashboard' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500 flex flex-col h-full">
-            
             <div className="flex justify-between items-end mb-6">
               <div><h2 className="text-3xl font-bold text-slate-900">Execution Overview</h2><p className="text-slate-500 mt-1">Track visual merchandising compliance across the network.</p></div>
               <div className="flex gap-4 items-center">
@@ -573,18 +688,10 @@ export default function VMDashboard() {
                         return (
                           <tr key={i} className="hover:bg-slate-50 transition-colors">
                             <td className="p-4 font-medium text-slate-600">{row.store}</td>
-                            <td className="p-4 text-center">
-                              <span onClick={() => handlePillClick(row.w1)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w1.status)}`}>{row.w1.status}</span>
-                            </td>
-                            <td className="p-4 text-center">
-                              <span onClick={() => handlePillClick(row.w2)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w2.status)}`}>{row.w2.status}</span>
-                            </td>
-                            <td className="p-4 text-center">
-                              <span onClick={() => handlePillClick(row.w3)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w3.status)}`}>{row.w3.status}</span>
-                            </td>
-                            <td className="p-4 text-center">
-                              <span onClick={() => handlePillClick(row.w4)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w4.status)}`}>{row.w4.status}</span>
-                            </td>
+                            <td className="p-4 text-center"><span onClick={() => handlePillClick(row.w1)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w1.status)}`}>{row.w1.status}</span></td>
+                            <td className="p-4 text-center"><span onClick={() => handlePillClick(row.w2)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w2.status)}`}>{row.w2.status}</span></td>
+                            <td className="p-4 text-center"><span onClick={() => handlePillClick(row.w3)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w3.status)}`}>{row.w3.status}</span></td>
+                            <td className="p-4 text-center"><span onClick={() => handlePillClick(row.w4)} className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wide inline-block w-20 transition-colors ${getStatusColor(row.w4.status)}`}>{row.w4.status}</span></td>
                             <td className="p-4 text-right font-black text-green-600">₹{row.totalPayout}</td>
                           </tr>
                         );
@@ -593,41 +700,77 @@ export default function VMDashboard() {
                   </tbody>
                 </table>
               )}
-
               {dashboardTab === 'general' && generalMatrixData.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={generalMatrixData.length} page={matrixPage} setPage={setMatrixPage} /></div>}
               {dashboardTab !== 'general' && filteredDashboardData.length > 0 && <div className="p-4 border-t border-slate-100"><Pagination total={filteredDashboardData.length} page={matrixPage} setPage={setMatrixPage} /></div>}
             </div>
           </div>
         )}
 
+        {/* SLACK ADMIN QUEUE */}
         {mainView === 'queue' && (
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
-              <div><h2 className="text-3xl font-bold text-slate-900 mb-1">Admin Queue</h2><p className="text-slate-500">Review and map store executions from Slack</p></div>
+              <div><h2 className="text-3xl font-bold text-slate-900 mb-1">Slack Admin Queue</h2><p className="text-slate-500">Review and map store executions pulled directly from Slack</p></div>
               <div className="flex items-end gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Start Date *</label><input type="date" value={syncStartDate} onChange={(e) => setSyncStartDate(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">End Date</label><input type="date" value={syncEndDate} onChange={(e) => setSyncEndDate(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500" /></div>
                 <button onClick={handleSyncSlack} disabled={isLoading} className="flex items-center gap-2 bg-blue-50 text-blue-700 border border-blue-200 px-4 py-1.5 rounded-lg text-sm font-bold hover:bg-blue-100 shadow-sm disabled:opacity-50 h-[34px]"><span className={`${isLoading && 'animate-spin'}`}>↻</span> Pull</button>
               </div>
             </div>
-            {isLoading && pendingExecutions.length === 0 ? (
+            {isLoading && slackPendingExecutions.length === 0 ? (
                <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>
-            ) : pendingExecutions.length === 0 ? (
+            ) : slackPendingExecutions.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm flex flex-col items-center">
                 <span className="text-4xl mb-4">🎉</span><h3 className="text-lg font-bold text-slate-900">Inbox Zero!</h3>
-                <p className="text-slate-500 mt-2 text-sm">There are no pending executions to review.</p>
+                <p className="text-slate-500 mt-2 text-sm">There are no pending Slack executions to review.</p>
               </div>
             ) : (
               <div>
                 <div className="space-y-6">
                   {paginatedQueue.map((exec) => <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchData} rejectionReasons={reasonsList} />)}
                 </div>
-                <Pagination total={pendingExecutions.length} page={queuePage} setPage={setQueuePage} />
+                <Pagination total={slackPendingExecutions.length} page={queuePage} setPage={setQueuePage} />
               </div>
             )}
           </div>
         )}
 
+        {/* NEW: PAZO IMPORT QUEUE */}
+        {mainView === 'pazo' && (
+          <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
+              <div>
+                <h2 className="text-3xl font-bold text-indigo-900 mb-1">PAZO Bulk Import</h2>
+                <p className="text-slate-500">Upload a PAZO CSV to queue executions for review without using Slack.</p>
+              </div>
+              <div className="flex items-center gap-3 bg-indigo-50 p-3 rounded-xl border border-indigo-100 shadow-sm">
+                <input type="file" accept=".csv" ref={pazoFileInputRef} onChange={handlePazoUpload} className="hidden" />
+                <button onClick={() => pazoFileInputRef.current?.click()} disabled={isLoading} className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 shadow-sm disabled:opacity-50 transition-colors">
+                  <span className={`${isLoading && 'animate-spin'}`}>📤</span> {isLoading ? 'Importing...' : 'Upload PAZO CSV'}
+                </button>
+              </div>
+            </div>
+
+            {pazoPendingExecutions.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm flex flex-col items-center">
+                <span className="text-4xl mb-4">📁</span><h3 className="text-lg font-bold text-slate-900">No PAZO uploads pending.</h3>
+                <p className="text-slate-500 mt-2 text-sm">Upload a CSV to start reviewing PAZO executions.</p>
+              </div>
+            ) : (
+              <div>
+                <div className="bg-indigo-100 text-indigo-800 text-xs font-bold px-4 py-2 rounded-lg mb-4 w-fit border border-indigo-200">
+                  {pazoPendingExecutions.length} PAZO Images waiting for review
+                </div>
+                <div className="space-y-6">
+                  {paginatedPazoQueue.map((exec) => <ExecutionCard key={exec.id} execution={exec} onUpdate={fetchData} rejectionReasons={reasonsList} />)}
+                </div>
+                <Pagination total={pazoPendingExecutions.length} page={pazoPage} setPage={setPazoPage} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* MISSING PHOTOS */}
         {mainView === 'missing' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
             <div className="flex justify-between items-end mb-8">
@@ -672,6 +815,7 @@ export default function VMDashboard() {
           </div>
         )}
 
+        {/* REVIEW HISTORY */}
         {mainView === 'review' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500">
             <div className="flex justify-between items-end mb-8">
@@ -908,7 +1052,6 @@ export default function VMDashboard() {
                         ))}
                       </div>
                       <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
-                        {/* NEW: Clone Button */}
                         <button onClick={() => startDuplicateCampaign(campaign)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 transition-colors flex items-center gap-2">📑 Clone</button>
                         <button onClick={() => setEditingCampaign(campaign)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 transition-colors flex items-center gap-2">✏️ Edit</button>
                         <button onClick={() => handleDeleteCampaign(campaign.id, campaign.name)} className="px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-2">🗑️ Delete</button>

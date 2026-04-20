@@ -27,9 +27,8 @@ const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
   return highestScore > 0 ? bestMatch : '';
 };
 
-// NEW: Accept rejectionReasons as a prop
 export default function ExecutionCard({ execution, onUpdate, rejectionReasons }: { execution: any, onUpdate: () => void, rejectionReasons: any[] }) {
-  const [mappedStore, setMappedStore] = useState(execution.store_name || '');
+  const [mappedStore, setMappedStore] = useState(execution.store_name || execution.extracted_store || '');
   const initialCampaigns = execution.campaign_name ? execution.campaign_name.split(', ') : [];
   const [selectedCampaigns, setSelectedCampaigns] = useState<string[]>(initialCampaigns);
   
@@ -41,6 +40,9 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
   const [customRejectReason, setCustomRejectReason] = useState('');
 
   const isProcessed = execution.status === 'approved' || execution.status === 'rejected';
+  
+  // NEW: Detect if this is a PAZO upload
+  const isPazo = execution.raw_text === 'PAZO Import';
 
   useEffect(() => {
     const fetchMasterData = async () => {
@@ -48,10 +50,9 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
       if (stores) {
         const storeNames = stores.map(s => s.name);
         setOfficialStores(storeNames);
-        if (!mappedStore && execution.raw_text) {
+        if (!mappedStore && !isPazo && execution.raw_text) {
           const guess = findBestStoreMatch(execution.raw_text, storeNames);
           if (guess) setMappedStore(guess);
-          else setMappedStore(execution.extracted_store || '');
         }
       }
       const { data: campaigns } = await supabase.from('campaigns').select('*').order('name');
@@ -113,8 +114,13 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
         <div>
           <div className="flex justify-between items-start mb-6">
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Slack Submission</p>
-              <p className="text-slate-700 italic font-medium leading-relaxed">&quot;{execution.raw_text || 'No caption provided'}&quot;</p>
+              {/* NEW: Dynamic Source Tagging */}
+              <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isPazo ? 'text-indigo-500' : 'text-slate-400'}`}>
+                {isPazo ? 'PAZO Bulk Import' : 'Slack Submission'}
+              </p>
+              <p className="text-slate-700 italic font-medium leading-relaxed">
+                {isPazo ? "Automated PAZO Queue Data" : `"${execution.raw_text || 'No caption provided'}"`}
+              </p>
             </div>
             <p className="text-xs text-slate-400 font-medium">{new Date(execution.submission_date).toLocaleString()}</p>
           </div>

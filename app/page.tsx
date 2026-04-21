@@ -260,6 +260,53 @@ export default function VMDashboard() {
     return allExecutions.filter(e => e.store_name && !validStoreNames.includes(e.store_name));
   }, [allExecutions, storesList]);
 
+  // --- GHOST DETECTION ENGINE ---
+  const ghostExecutions = useMemo(() => {
+    const ghosts: { execution: any, campaignId: number, campaignName: string, storeName: string }[] = [];
+    const validStoreNames = storesList.map(s => s.name);
+    
+    allExecutions.forEach(e => {
+      // Find executions that are fully processed and valid...
+      if ((e.status === 'approved' || e.status === 'rejected') && e.campaign_name && e.store_name && validStoreNames.includes(e.store_name)) {
+          const taggedCamps = e.campaign_name.split(', ');
+          taggedCamps.forEach((cName: string) => {
+              const campObj = campaignsList.find(c => c.name === cName);
+              // ...but the store is missing from the Campaign's official roster!
+              if (campObj && (!campObj.stores || !campObj.stores.includes(e.store_name))) {
+                  ghosts.push({ execution: e, campaignId: campObj.id, campaignName: campObj.name, storeName: e.store_name });
+              }
+          });
+      }
+    });
+    return ghosts;
+  }, [allExecutions, storesList, campaignsList]);
+
+  const handleAutoEnrollGhosts = async () => {
+    setIsLoading(true);
+    const updates: Record<number, Set<string>> = {}; 
+    
+    // Group all the missing stores by campaign
+    ghostExecutions.forEach(g => {
+        if (!updates[g.campaignId]) updates[g.campaignId] = new Set();
+        updates[g.campaignId].add(g.storeName);
+    });
+    
+    const promises = [];
+    for (const [campIdStr, newStoresSet] of Object.entries(updates)) {
+        const campId = parseInt(campIdStr);
+        const campObj = campaignsList.find(c => c.id === campId);
+        if (campObj) {
+            const currentStores = campObj.stores || [];
+            // Merge existing stores with the newly recovered stores
+            const updatedStores = Array.from(new Set([...currentStores, ...Array.from(newStoresSet)]));
+            promises.push(supabase.from('campaigns').update({ stores: updatedStores }).eq('id', campId));
+        }
+    }
+    await Promise.all(promises);
+    alert(`Successfully enrolled stores for ${ghostExecutions.length} orphaned tags! Your Analytics Matrix is now 100% accurate.`);
+    fetchData();
+  };
+
   // --- ORPHAN RESOLUTION HANDLER ---
   const handleOrphanResolve = async (executionId: string, correctedStoreName: string, selectedCampaignName: string, status: 'approved' | 'rejected', rejectReason: string | null) => {
     
@@ -907,6 +954,68 @@ export default function VMDashboard() {
                 <p className="text-slate-500">Fix executions with invalid store names to reattach them to the matrix.</p>
               </div>
             </div>
+
+            {/* --- NEW: GHOST RECOVERY BANNER --- */}
+            {/* --- UPGRADED: GHOST RECOVERY BANNER & LIST --- */}
+            {ghostExecutions.length > 0 && (
+              <div className="mb-10 animate-in fade-in slide-in-from-top-4">
+                {/* The Banner */}
+                <div className="bg-blue-50 border border-blue-200 rounded-t-xl p-6 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-blue-900 flex items-center gap-2"><span>👻</span> Ghost Executions Detected</h3>
+                    <p className="text-sm text-blue-700 mt-1">
+                      We found <strong>{ghostExecutions.length}</strong> reviewed photos tagged to brands, but the stores aren't enrolled in those campaigns.
+                    </p>
+                  </div>
+                  <button onClick={handleAutoEnrollGhosts} disabled={isLoading} className="whitespace-nowrap bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors shadow-md">
+                    {isLoading ? 'Fixing...' : 'Auto-Enroll All into Matrix'}
+                  </button>
+                </div>
+                
+                {/* The Detail Table */}
+                <div className="bg-white border-x border-b border-blue-200 rounded-b-xl overflow-hidden shadow-sm max-h-96 overflow-y-auto">
+                   <table className="w-full text-left border-collapse">
+                      <thead className="sticky top-0 bg-blue-50/90 backdrop-blur-sm shadow-sm z-10">
+                        <tr className="border-b border-blue-100 text-[10px] text-blue-800 uppercase tracking-widest">
+                          <th className="p-3 font-semibold">Store Name</th>
+                          <th className="p-3 font-semibold">Missing Campaign Roster</th>
+                          <th className="p-3 font-semibold">Current Status</th>
+                          <th className="p-3 font-semibold text-right">Photo</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-blue-50 text-sm">
+                        {ghostExecutions.map((ghost, i) => (
+                          <tr key={i} className="hover:bg-blue-50/30 transition-colors">
+                            <td className="p-3 font-bold text-slate-800">{ghost.storeName}</td>
+                            <td className="p-3 text-blue-600 font-bold">{ghost.campaignName}</td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${ghost.execution.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                {ghost.execution.status}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right">
+                              <button onClick={() => {
+                                setSelectedPhoto({ 
+                                  id: ghost.execution.id, 
+                                  store: ghost.storeName, 
+                                  status: ghost.execution.status === 'approved' ? 'Approved' : 'Rejected', 
+                                  image: ghost.execution.image_url, 
+                                  date: new Date(ghost.execution.submission_date).toLocaleString(), 
+                                  raw_text: ghost.execution.raw_text, 
+                                  rejection_reason: ghost.execution.rejection_reason 
+                                });
+                                setModalActionState('idle');
+                              }} className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline px-3 py-1.5 rounded-md bg-blue-50 transition-colors">
+                                View Photo
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                   </table>
+                </div>
+              </div>
+            )}
 
             {orphanExecutions.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm flex flex-col items-center">

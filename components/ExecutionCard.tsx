@@ -130,6 +130,16 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
     if (!mappedStore || !officialStores.includes(mappedStore)) return alert("CRITICAL: You must select a valid store from the dropdown list.");
     if (selectedCampaigns.length === 0) return alert("Please tag at least one brand before approving.");
     
+    // NEW: Auto-enroll the store into the chosen campaigns if not already enrolled
+    const enrollPromises = selectedCampaigns.map(async (cName) => {
+        const campObj = allCampaigns.find(c => c.name === cName);
+        if (campObj && (!campObj.stores || !campObj.stores.includes(mappedStore))) {
+            const newStores = [...(campObj.stores || []), mappedStore];
+            await supabase.from('campaigns').update({ stores: newStores }).eq('id', campObj.id);
+        }
+    });
+    await Promise.all(enrollPromises);
+
     const finalCampaignString = selectedCampaigns.join(', ');
     const { error } = await supabase.from('executions').update({ 
       status: 'approved', store_name: mappedStore, campaign_name: finalCampaignString,
@@ -141,9 +151,18 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
   const confirmReject = async () => {
     if (!mappedStore || !officialStores.includes(mappedStore)) return alert("CRITICAL: You must select a valid store from the dropdown list.");
     if (selectedCampaigns.length === 0) return alert("Please tag the attempted brand(s) so this rejection appears in the Analytics Matrix.");
-    
     if (!rejectReason) return alert("Please select a rejection reason.");
     if (rejectReason === 'Other (Type custom reason)' && !customRejectReason.trim()) return alert("Please type a custom reason.");
+    
+    // NEW: Auto-enroll the store into the chosen campaigns if not already enrolled
+    const enrollPromises = selectedCampaigns.map(async (cName) => {
+        const campObj = allCampaigns.find(c => c.name === cName);
+        if (campObj && (!campObj.stores || !campObj.stores.includes(mappedStore))) {
+            const newStores = [...(campObj.stores || []), mappedStore];
+            await supabase.from('campaigns').update({ stores: newStores }).eq('id', campObj.id);
+        }
+    });
+    await Promise.all(enrollPromises);
     
     const finalReason = rejectReason === 'Other (Type custom reason)' ? customRejectReason : rejectReason;
     const finalCampaignString = selectedCampaigns.join(', ');

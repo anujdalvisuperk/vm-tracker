@@ -307,6 +307,24 @@ export default function VMDashboard() {
     fetchData();
   };
 
+  const handleEnrollSingleGhost = async (campaignId: number, storeName: string, campaignName: string) => {
+    setIsLoading(true);
+    const campObj = campaignsList.find(c => c.id === campaignId);
+    if (campObj) {
+        const currentStores = campObj.stores || [];
+        if (!currentStores.includes(storeName)) {
+            const updatedStores = [...currentStores, storeName];
+            const { error } = await supabase.from('campaigns').update({ stores: updatedStores }).eq('id', campaignId);
+            if (!error) {
+                fetchData();
+            } else {
+                alert("Error enrolling store: " + error.message);
+            }
+        }
+    }
+    setIsLoading(false);
+  };
+
   // --- ORPHAN RESOLUTION HANDLER ---
   const handleOrphanResolve = async (executionId: string, correctedStoreName: string, selectedCampaignName: string, status: 'approved' | 'rejected', rejectReason: string | null) => {
     
@@ -993,7 +1011,7 @@ export default function VMDashboard() {
                                 {ghost.execution.status}
                               </span>
                             </td>
-                            <td className="p-3 text-right">
+                            <td className="p-3 text-right flex justify-end gap-2">
                               <button onClick={() => {
                                 setSelectedPhoto({ 
                                   id: ghost.execution.id, 
@@ -1005,8 +1023,15 @@ export default function VMDashboard() {
                                   rejection_reason: ghost.execution.rejection_reason 
                                 });
                                 setModalActionState('idle');
-                              }} className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline px-3 py-1.5 rounded-md bg-blue-50 transition-colors">
+                              }} className="text-xs font-bold text-blue-600 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-md bg-blue-50 transition-colors shadow-sm">
                                 View Photo
+                              </button>
+                              <button 
+                                onClick={() => handleEnrollSingleGhost(ghost.campaignId, ghost.storeName, ghost.campaignName)} 
+                                disabled={isLoading}
+                                className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-md shadow-sm transition-colors disabled:opacity-50"
+                              >
+                                Enroll Single
                               </button>
                             </td>
                           </tr>

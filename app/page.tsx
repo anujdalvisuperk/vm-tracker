@@ -943,6 +943,41 @@ export default function VMDashboard() {
                     </button>
                   </div>
                 </div>
+                {/* TEMPORARY FIX BUTTON - You can delete this after using it once! */}
+                <div className="ml-4 pl-4 border-l border-slate-200">
+                    <label className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-2 block">Fix Orphaned Data</label>
+                    <input 
+                      type="file" 
+                      accept=".csv" 
+                      className="text-xs"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setIsLoading(true);
+                        const reader = new FileReader();
+                        reader.onload = async (event) => {
+                          const text = event.target?.result as string;
+                          const lines = text.split('\n').filter(l => l.trim());
+                          const headers = lines[0].split(',');
+                          const idIdx = headers.findIndex(h => h.includes('id'));
+                          const nameIdx = headers.findIndex(h => h.includes('bad_mapped_name'));
+                          
+                          let fixCount = 0;
+                          for (let i = 1; i < lines.length; i++) {
+                            // Quick split handling simple CSVs
+                            const row = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g)?.map(s => s.replace(/(^"|"$)/g, '').trim()) || [];
+                            if (row[idIdx] && row[nameIdx]) {
+                              await supabase.from('executions').update({ store_name: row[nameIdx] }).eq('id', row[idIdx]);
+                              fixCount++;
+                            }
+                          }
+                          alert(`Successfully reconnected ${fixCount} photos to the matrix!`);
+                          fetchData();
+                        };
+                        reader.readAsText(file);
+                      }} 
+                    />
+                  </div>
 
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
                   <table className="w-full text-left border-collapse">

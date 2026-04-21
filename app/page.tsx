@@ -956,23 +956,52 @@ export default function VMDashboard() {
                         setIsLoading(true);
                         const reader = new FileReader();
                         reader.onload = async (event) => {
-                          const text = event.target?.result as string;
-                          const lines = text.split('\n').filter(l => l.trim());
-                          const headers = lines[0].split(',');
-                          const idIdx = headers.findIndex(h => h.includes('id'));
-                          const nameIdx = headers.findIndex(h => h.includes('bad_mapped_name'));
-                          
-                          let fixCount = 0;
-                          for (let i = 1; i < lines.length; i++) {
-                            // Quick split handling simple CSVs
-                            const row = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g)?.map(s => s.replace(/(^"|"$)/g, '').trim()) || [];
-                            if (row[idIdx] && row[nameIdx]) {
-                              await supabase.from('executions').update({ store_name: row[nameIdx] }).eq('id', row[idIdx]);
-                              fixCount++;
+                          try {
+                            const text = event.target?.result as string;
+                            const lines = text.split('\n').filter(l => l.trim());
+                            
+                            // Use the bulletproof parser we built for PAZO
+                            const headers = parseCSVRow(lines[0]);
+                            const idIdx = headers.findIndex(h => h.toLowerCase().includes('id'));
+                            const nameIdx = headers.findIndex(h => h.toLowerCase().includes('bad_mapped_name'));
+                            
+                            if (idIdx === -1 || nameIdx === -1) {
+                                throw new Error(`Could not find columns! Found: ${headers.join(', ')}`);
                             }
+
+                            let fixCount = 0;
+                            const updatePromises = [];
+
+                            for (let i = 1; i < lines.length; i++) {
+                              const row = parseCSVRow(lines[i]);
+                              const id = row[idIdx];
+                              const newName = row[nameIdx];
+                              
+                              if (id && newName && newName !== 'null' && newName !== '') {
+                                // Push the update command to an array so we can process them efficiently
+                                updatePromises.push(
+                                    supabase.from('executions')
+                                    .update({ store_name: newName })
+                                    .eq('id', id)
+                                    .then(({error}) => {
+                                        if (!error) fixCount++;
+                                        else console.error("Failed to update ID:", id, error.message);
+                                    })
+                                );
+                              }
+                            }
+                            
+                            // Wait for all database updates to finish
+                            await Promise.all(updatePromises);
+                            
+                            alert(`Successfully reconnected ${fixCount} photos to the matrix!`);
+                            fetchData();
+                          } catch (err: any) {
+                              alert("Error parsing file: " + err.message);
+                          } finally {
+                              setIsLoading(false);
+                              e.target.value = ''; // Reset the file input
                           }
-                          alert(`Successfully reconnected ${fixCount} photos to the matrix!`);
-                          fetchData();
                         };
                         reader.readAsText(file);
                       }} 

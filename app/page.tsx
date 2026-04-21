@@ -15,7 +15,6 @@ const Pagination = ({ total, page, setPage, perPage = 10 }: { total: number, pag
   );
 };
 
-// CSV parsing helper to handle commas inside quotes safely
 const parseCSVRow = (str: string) => {
     const result = [];
     let cur = '';
@@ -34,13 +33,123 @@ const parseCSVRow = (str: string) => {
     return result;
 };
 
+// --- NEW COMPONENT: ORPHAN RECOVERY CARD ---
+const OrphanCard = ({ execution, storesList, campaignsList, reasonsList, onResolve, onDelete }: any) => {
+  const [editedStore, setEditedStore] = useState(execution.store_name || '');
+  const [selectedCamp, setSelectedCamp] = useState(execution.campaign_name || '');
+  const [actionState, setActionState] = useState<'idle' | 'rejecting'>('idle');
+  const [rejectReason, setRejectReason] = useState('');
+  const [customReason, setCustomReason] = useState('');
+
+  const handleApprove = () => {
+    if (!editedStore.trim()) return alert("Please enter a valid store name.");
+    if (!selectedCamp) return alert("Please select a campaign.");
+    onResolve(execution.id, editedStore.trim(), selectedCamp, 'approved', null);
+  };
+
+  const handleReject = () => {
+    if (!editedStore.trim()) return alert("Please enter a valid store name.");
+    if (!selectedCamp) return alert("Please select a campaign so the rejection tracks to the matrix.");
+    if (!rejectReason) return alert("Please select a reason.");
+    const finalReason = rejectReason === 'Other (Type custom reason)' ? customReason : rejectReason;
+    if (rejectReason === 'Other (Type custom reason)' && !finalReason.trim()) return alert("Please type a reason.");
+    
+    onResolve(execution.id, editedStore.trim(), selectedCamp, 'rejected', finalReason);
+  };
+
+  return (
+    <div className="bg-amber-50/30 border border-amber-200 rounded-xl overflow-visible shadow-sm flex mb-6">
+      <div className="w-[300px] bg-slate-100 flex-shrink-0 relative group rounded-l-xl overflow-hidden border-r border-amber-100">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={execution.image_url} alt="Execution" className="w-full h-full object-cover cursor-zoom-in" onClick={() => window.open(execution.image_url, '_blank')} />
+        <div className="absolute top-2 left-2 bg-amber-500 text-white text-[10px] font-black px-2 py-1 rounded shadow-sm uppercase tracking-widest">Orphaned Data</div>
+      </div>
+
+      <div className="flex-1 p-6 flex flex-col justify-between overflow-visible">
+        <div>
+          <div className="flex justify-between items-start mb-4">
+             <div>
+               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Original Bad Mapping</p>
+               <p className="text-xl font-black text-red-500 line-through decoration-2">{execution.store_name}</p>
+             </div>
+             <p className="text-xs text-slate-400 font-medium">{new Date(execution.submission_date).toLocaleString()}</p>
+          </div>
+          <p className="text-sm text-slate-600 italic mb-6 border-l-2 border-slate-300 pl-3">&quot;{execution.raw_text}&quot;</p>
+
+          <div className="grid grid-cols-2 gap-4 mb-4">
+             <div>
+               <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Correct Store Name *</label>
+               <input 
+                 type="text" 
+                 value={editedStore} 
+                 onChange={(e) => setEditedStore(e.target.value)} 
+                 list={`orphan-stores-${execution.id}`}
+                 className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 bg-white"
+                 placeholder="Type or select correct store..."
+               />
+               <datalist id={`orphan-stores-${execution.id}`}>
+                 {storesList.map((s: any) => <option key={s.id} value={s.name} />)}
+               </datalist>
+             </div>
+             <div>
+               <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Assign Campaign *</label>
+               <select 
+                 value={selectedCamp} 
+                 onChange={(e) => setSelectedCamp(e.target.value)}
+                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
+               >
+                 <option value="" disabled>-- Select Campaign --</option>
+                 {campaignsList.map((c: any) => <option key={c.id} value={c.name}>{c.name}</option>)}
+               </select>
+             </div>
+          </div>
+        </div>
+
+        <div className="mt-2 pt-4 border-t border-amber-100 flex flex-col justify-end min-h-[50px]">
+          {actionState === 'idle' ? (
+             <div className="flex gap-2">
+               <button onClick={handleApprove} className="flex-1 bg-green-600 text-white font-bold py-2.5 px-4 rounded-lg hover:bg-green-700 transition-colors shadow-sm">
+                 ✓ Approve & Auto-Assign
+               </button>
+               <button onClick={() => setActionState('rejecting')} className="w-40 bg-red-50 text-red-700 font-bold py-2.5 px-4 rounded-lg border border-red-200 hover:bg-red-100 transition-colors">
+                 Reject Photo
+               </button>
+               <button onClick={() => onDelete(execution.id)} title="Delete completely" className="w-12 flex items-center justify-center bg-white text-slate-400 font-bold py-2.5 rounded-lg border border-slate-200 hover:bg-red-50 hover:text-red-600 transition-colors">
+                 🗑️
+               </button>
+             </div>
+          ) : (
+             <div className="bg-red-50 border border-red-100 p-4 rounded-xl animate-in fade-in slide-in-from-bottom-2">
+               <div className="flex justify-between items-center mb-3">
+                 <label className="text-sm font-bold text-red-800">Reason for Rejection *</label>
+                 <button onClick={() => setActionState('idle')} className="text-xs font-bold text-blue-600 hover:underline">← Cancel</button>
+               </div>
+               <select value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className="w-full border border-red-200 rounded-lg px-4 py-2 text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm mb-3">
+                 <option value="" disabled>-- Select a reason --</option>
+                 {reasonsList.map((r: any) => <option key={r.id} value={r.reason}>{r.reason}</option>)}
+                 <option value="Other (Type custom reason)">Other (Type custom reason)</option>
+               </select>
+               {rejectReason === 'Other (Type custom reason)' && (
+                 <input type="text" placeholder="Type specific reason..." value={customReason} onChange={(e) => setCustomReason(e.target.value)} className="w-full border border-red-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm mb-3" autoFocus />
+               )}
+               <button onClick={handleReject} className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 rounded-lg shadow-sm transition-colors text-sm">
+                 Confirm Rejection & Auto-Assign
+               </button>
+             </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function VMDashboard() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  // NEW: Added 'pazo' view
-  const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'pazo' | 'missing' | 'review' | 'settings' | 'login'>('dashboard');
+  // NEW: Added 'orphans' view
+  const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'pazo' | 'orphans' | 'missing' | 'review' | 'settings' | 'login'>('dashboard');
   const [dashboardTab, setDashboardTab] = useState<'general' | string>('general');
   const [settingsTab, setSettingsTab] = useState<'stores' | 'campaigns' | 'reasons'>('stores');
   const [selectedMonth, setSelectedMonth] = useState('April');
@@ -58,7 +167,8 @@ export default function VMDashboard() {
   const [isLoading, setIsLoading] = useState(false);
 
   const [queuePage, setQueuePage] = useState(1);
-  const [pazoPage, setPazoPage] = useState(1); // NEW: Pagination for PAZO
+  const [pazoPage, setPazoPage] = useState(1);
+  const [orphansPage, setOrphansPage] = useState(1); // NEW: Pagination for Orphans
   const [missingPage, setMissingPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
   const [storesPage, setStoresPage] = useState(1);
@@ -91,7 +201,7 @@ export default function VMDashboard() {
   const [editingCampaign, setEditingCampaign] = useState<any | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pazoFileInputRef = useRef<HTMLInputElement>(null); // NEW: Ref for PAZO CSV
+  const pazoFileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -116,7 +226,7 @@ export default function VMDashboard() {
   useEffect(() => { fetchData(); }, [mainView]);
 
   useEffect(() => {
-    setQueuePage(1); setPazoPage(1); setMissingPage(1); setHistoryPage(1); setStoresPage(1); setCampaignsPage(1); setMatrixPage(1);
+    setQueuePage(1); setPazoPage(1); setOrphansPage(1); setMissingPage(1); setHistoryPage(1); setStoresPage(1); setCampaignsPage(1); setMatrixPage(1);
   }, [mainView, settingsTab, reviewFilter, storeFilter, campaignFilter, missingCampaignFilter, searchQuery, dashboardTab]);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -127,6 +237,55 @@ export default function VMDashboard() {
 
   const handleLogout = () => { setIsAuthenticated(false); setMainView('dashboard'); };
 
+  // --- ORPHAN DETECTION ENGINE ---
+  const orphanExecutions = useMemo(() => {
+    const validStoreNames = storesList.map(s => s.name);
+    // Find executions that have a store_name, but that name no longer exists in the official stores list
+    return allExecutions.filter(e => e.store_name && !validStoreNames.includes(e.store_name));
+  }, [allExecutions, storesList]);
+
+  // --- ORPHAN RESOLUTION HANDLER ---
+  const handleOrphanResolve = async (executionId: number, correctedStoreName: string, selectedCampaignName: string, status: 'approved' | 'rejected', rejectReason: string | null) => {
+    
+    // 1. If they typed a completely new correct store name, auto-add it to the Master Store List
+    const storeExists = storesList.some(s => s.name === correctedStoreName);
+    if (!storeExists) {
+      await supabase.from('stores').insert([{ name: correctedStoreName, aligned: true }]);
+    }
+
+    // 2. Update the Execution Record
+    const { error: execError } = await supabase.from('executions').update({
+      store_name: correctedStoreName,
+      campaign_name: selectedCampaignName,
+      status: status,
+      rejection_reason: rejectReason,
+      reviewed_at: new Date().toISOString()
+    }).eq('id', executionId);
+
+    if (execError) return alert("Error updating execution: " + execError.message);
+
+    // 3. Auto-Add the Store to the Campaign
+    const camp = campaignsList.find(c => c.name === selectedCampaignName);
+    if (camp) {
+      const currentStores = camp.stores || [];
+      if (!currentStores.includes(correctedStoreName)) {
+        await supabase.from('campaigns').update({
+          stores: [...currentStores, correctedStoreName]
+        }).eq('id', camp.id);
+      }
+    }
+
+    fetchData();
+  };
+
+  const handleOrphanDelete = async (executionId: number) => {
+    if (confirm("Are you sure you want to permanently delete this orphaned record?")) {
+      await supabase.from('executions').delete().eq('id', executionId);
+      fetchData();
+    }
+  };
+
+  // ... (Rest of existing data handlers: handleSyncSlack, handlePazoUpload, etc.) ...
   const handleSyncSlack = async () => {
     if (!syncStartDate) return alert("Please select at least a Start Date.");
     setIsLoading(true);
@@ -136,7 +295,6 @@ export default function VMDashboard() {
     } catch (error) { console.error("Sync failed:", error); }
   };
 
-  // --- NEW: PAZO CSV LOGIC ---
   const handlePazoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -151,8 +309,8 @@ export default function VMDashboard() {
 
             const headers = parseCSVRow(lines[0]);
             const storeIdx = headers.findIndex(h => h.includes('Store Name'));
-            const dateIdx = headers.findIndex(h => h.includes('Submitted Dat')); // Handle shortened header from screenshot
-            const timeIdx = headers.findIndex(h => h.includes('Submitted Tim')); // Handle shortened header
+            const dateIdx = headers.findIndex(h => h.includes('Submitted Dat')); 
+            const timeIdx = headers.findIndex(h => h.includes('Submitted Tim')); 
             const imgIdx = headers.findIndex(h => h.includes('Image 1'));
 
             if (storeIdx === -1 || dateIdx === -1 || timeIdx === -1 || imgIdx === -1) {
@@ -160,6 +318,7 @@ export default function VMDashboard() {
             }
 
             const newExecutions = [];
+            let skippedCount = 0;
 
             for (let i = 1; i < lines.length; i++) {
                 const row = parseCSVRow(lines[i]);
@@ -168,11 +327,18 @@ export default function VMDashboard() {
                 const storeName = row[storeIdx];
                 const dateStr = row[dateIdx];
                 const timeStr = row[timeIdx];
-                const imgUrl = row[imgIdx];
+                const rawImgText = row[imgIdx];
 
-                if (!imgUrl || !imgUrl.startsWith('http')) continue;
+                const urlMatch = rawImgText.match(/https?:\/\/[^\s",]+/);
+                
+                if (!urlMatch) {
+                    console.warn(`Row ${i + 1} skipped. No valid URL found in text: "${rawImgText}"`);
+                    skippedCount++;
+                    continue;
+                }
 
-                // Safely merge date and time into an ISO format (fallback to now if parsing fails completely)
+                const finalImgUrl = urlMatch[0];
+
                 let isoDate = new Date().toISOString();
                 try {
                     const [dd, mm, yyyy] = dateStr.split('-');
@@ -192,7 +358,7 @@ export default function VMDashboard() {
                     slack_message_id: `pazo-${Date.now()}-${i}`,
                     raw_text: `PAZO Import`,
                     extracted_store: storeName,
-                    image_url: imgUrl,
+                    image_url: finalImgUrl,
                     status: 'pending_admin',
                     submission_date: isoDate
                 });
@@ -204,9 +370,13 @@ export default function VMDashboard() {
                     const { error } = await supabase.from('executions').insert(chunk);
                     if (error) console.error("Supabase insert error:", error);
                 }
-                alert(`Successfully imported ${newExecutions.length} PAZO executions!`);
+                
+                let successMsg = `Successfully imported ${newExecutions.length} PAZO executions!`;
+                if (skippedCount > 0) successMsg += `\n(Skipped ${skippedCount} rows because they didn't contain valid 'http' links.)`;
+                alert(successMsg);
+                
             } else {
-                alert("No valid image rows found in the CSV.");
+                alert("No valid image rows found in the CSV. Make sure you extracted the hidden URLs before exporting!");
             }
             
             fetchData();
@@ -469,12 +639,12 @@ export default function VMDashboard() {
     return filteredDashboardData.reduce((sum, row) => sum + row.totalPayout, 0);
   }, [filteredDashboardData]);
 
-  // --- SEPARATE QUEUES FOR SLACK vs PAZO ---
   const slackPendingExecutions = pendingExecutions.filter(e => e.raw_text !== 'PAZO Import');
   const pazoPendingExecutions = pendingExecutions.filter(e => e.raw_text === 'PAZO Import');
 
   const paginatedQueue = slackPendingExecutions.slice((queuePage - 1) * ITEMS_PER_PAGE, queuePage * ITEMS_PER_PAGE);
   const paginatedPazoQueue = pazoPendingExecutions.slice((pazoPage - 1) * ITEMS_PER_PAGE, pazoPage * ITEMS_PER_PAGE);
+  const paginatedOrphans = orphanExecutions.slice((orphansPage - 1) * ITEMS_PER_PAGE, orphansPage * ITEMS_PER_PAGE);
   
   const paginatedMissing = missingExecutions.slice((missingPage - 1) * ITEMS_PER_PAGE, missingPage * ITEMS_PER_PAGE);
   const paginatedHistory = filteredReviewData.slice((historyPage - 1) * ITEMS_PER_PAGE, historyPage * ITEMS_PER_PAGE);
@@ -557,10 +727,15 @@ export default function VMDashboard() {
                 {slackPendingExecutions.length > 0 && <span className="bg-amber-500 text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-full">{slackPendingExecutions.length}</span>}
               </button>
 
-              {/* NEW PAZO TAB */}
               <button onClick={() => setMainView('pazo')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'pazo' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
                 <div className="flex items-center gap-3"><span>📤 PAZO Import</span></div>
                 {pazoPendingExecutions.length > 0 && <span className="bg-indigo-400 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{pazoPendingExecutions.length}</span>}
+              </button>
+
+              {/* NEW ORPHANS TAB */}
+              <button onClick={() => setMainView('orphans')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'orphans' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                <div className="flex items-center gap-3"><span>🚑 Orphan Recovery</span></div>
+                {orphanExecutions.length > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">{orphanExecutions.length}</span>}
               </button>
 
               <button onClick={() => setMainView('missing')} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${mainView === 'missing' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
@@ -594,6 +769,7 @@ export default function VMDashboard() {
         {/* DASHBOARD TAB */}
         {mainView === 'dashboard' && (
           <div className="max-w-6xl mx-auto animate-in fade-in duration-500 flex flex-col h-full">
+            
             <div className="flex justify-between items-end mb-6">
               <div><h2 className="text-3xl font-bold text-slate-900">Execution Overview</h2><p className="text-slate-500 mt-1">Track visual merchandising compliance across the network.</p></div>
               <div className="flex gap-4 items-center">
@@ -706,6 +882,45 @@ export default function VMDashboard() {
           </div>
         )}
 
+        {/* ORPHAN RECOVERY TAB */}
+        {mainView === 'orphans' && (
+          <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
+              <div>
+                <h2 className="text-3xl font-bold text-amber-600 mb-1">Orphan Recovery</h2>
+                <p className="text-slate-500">Fix executions with invalid store names to reattach them to the matrix.</p>
+              </div>
+            </div>
+
+            {orphanExecutions.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-sm flex flex-col items-center">
+                <span className="text-4xl mb-4">🩺</span><h3 className="text-lg font-bold text-slate-900">Database is perfectly healthy!</h3>
+                <p className="text-slate-500 mt-2 text-sm">There are no orphaned executions.</p>
+              </div>
+            ) : (
+              <div>
+                <div className="bg-amber-100 text-amber-900 text-xs font-bold px-4 py-2 rounded-lg mb-4 w-fit border border-amber-200">
+                  {orphanExecutions.length} Missing Records Found
+                </div>
+                <div className="space-y-6">
+                  {paginatedOrphans.map((exec) => (
+                    <OrphanCard 
+                      key={exec.id} 
+                      execution={exec} 
+                      storesList={storesList} 
+                      campaignsList={campaignsList} 
+                      reasonsList={reasonsList}
+                      onResolve={handleOrphanResolve}
+                      onDelete={handleOrphanDelete}
+                    />
+                  ))}
+                </div>
+                <Pagination total={orphanExecutions.length} page={orphansPage} setPage={setOrphansPage} />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* SLACK ADMIN QUEUE */}
         {mainView === 'queue' && (
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
@@ -735,7 +950,7 @@ export default function VMDashboard() {
           </div>
         )}
 
-        {/* NEW: PAZO IMPORT QUEUE */}
+        {/* PAZO IMPORT QUEUE */}
         {mainView === 'pazo' && (
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
@@ -898,7 +1113,6 @@ export default function VMDashboard() {
           <div className="max-w-5xl mx-auto animate-in fade-in duration-500">
             <div className="mb-8"><h2 className="text-3xl font-bold text-slate-900">Master Settings</h2><p className="text-slate-500 mt-1">Manage Store Roster, Campaigns, and Rejection Reasons.</p></div>
 
-            {/* TAB SELECTORS */}
             <div className="flex space-x-1 bg-slate-200/50 p-1 rounded-xl mb-6 w-fit">
               <button onClick={() => setSettingsTab('stores')} className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${settingsTab === 'stores' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>🏢 Manage Stores</button>
               <button onClick={() => setSettingsTab('campaigns')} className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${settingsTab === 'campaigns' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>📢 Manage Campaigns</button>
@@ -943,70 +1157,6 @@ export default function VMDashboard() {
                     </button>
                   </div>
                 </div>
-                {/* TEMPORARY FIX BUTTON - You can delete this after using it once! */}
-                <div className="ml-4 pl-4 border-l border-slate-200">
-                    <label className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-2 block">Fix Orphaned Data</label>
-                    <input 
-                      type="file" 
-                      accept=".csv" 
-                      className="text-xs"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        setIsLoading(true);
-                        const reader = new FileReader();
-                        reader.onload = async (event) => {
-                          try {
-                            const text = event.target?.result as string;
-                            const lines = text.split('\n').filter(l => l.trim());
-                            
-                            // Use the bulletproof parser we built for PAZO
-                            const headers = parseCSVRow(lines[0]);
-                            const idIdx = headers.findIndex(h => h.toLowerCase().includes('id'));
-                            const nameIdx = headers.findIndex(h => h.toLowerCase().includes('bad_mapped_name'));
-                            
-                            if (idIdx === -1 || nameIdx === -1) {
-                                throw new Error(`Could not find columns! Found: ${headers.join(', ')}`);
-                            }
-
-                            let fixCount = 0;
-                            const updatePromises = [];
-
-                            for (let i = 1; i < lines.length; i++) {
-                              const row = parseCSVRow(lines[i]);
-                              const id = row[idIdx];
-                              const newName = row[nameIdx];
-                              
-                              if (id && newName && newName !== 'null' && newName !== '') {
-                                // Push the update command to an array so we can process them efficiently
-                                updatePromises.push(
-                                    supabase.from('executions')
-                                    .update({ store_name: newName })
-                                    .eq('id', id)
-                                    .then(({error}) => {
-                                        if (!error) fixCount++;
-                                        else console.error("Failed to update ID:", id, error.message);
-                                    })
-                                );
-                              }
-                            }
-                            
-                            // Wait for all database updates to finish
-                            await Promise.all(updatePromises);
-                            
-                            alert(`Successfully reconnected ${fixCount} photos to the matrix!`);
-                            fetchData();
-                          } catch (err: any) {
-                              alert("Error parsing file: " + err.message);
-                          } finally {
-                              setIsLoading(false);
-                              e.target.value = ''; // Reset the file input
-                          }
-                        };
-                        reader.readAsText(file);
-                      }} 
-                    />
-                  </div>
 
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
                   <table className="w-full text-left border-collapse">
@@ -1207,7 +1357,7 @@ export default function VMDashboard() {
         </div>
       )}
 
-      {/* --- UPGRADED PHOTO VIEWER & EDITOR MODAL --- */}
+      {/* --- PHOTO VIEWER & EDITOR MODAL --- */}
       {selectedPhoto && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-4xl w-full flex flex-col">

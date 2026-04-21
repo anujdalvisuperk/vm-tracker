@@ -2,11 +2,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-// --- UPGRADED ALGORITHM: Now calculates a 0-100 Confidence Score ---
+// --- UPGRADED ALGORITHM: Catches 2-letter names and split noise words ---
 const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
   if (!rawText) return { name: '', score: 0 };
+  
+  // 1. Clean up inputs
   let cleanInput = rawText.toLowerCase().replace(/[.,!*'_]/g, ' ');
-  const stopWords = ['superk', 'store', 'supermarket', 'mart', 'done', 'execution', 'photo', 'sir', 'check', 'vm'];
+  
+  // 2. Added 'super', 'market', 'kirana' to handle split words
+  const stopWords = ['superk', 'store', 'supermarket', 'super', 'market', 'mart', 'done', 'execution', 'photo', 'sir', 'check', 'vm', 'kirana'];
   
   stopWords.forEach(sw => { cleanInput = cleanInput.replace(new RegExp(`\\b${sw}\\b`, 'g'), ' '); });
 
@@ -16,19 +20,23 @@ const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
   officialStores.forEach(store => {
     const cleanStore = store.toLowerCase();
     
-    // Exact Substring Match = 100% Confidence
+    // 100% confidence if it's a perfect substring match
     if (rawText.toLowerCase().includes(cleanStore)) {
         bestMatch = store; highestScore = 100; return;
     }
     
     let uniqueStoreName = cleanStore;
     stopWords.forEach(sw => { uniqueStoreName = uniqueStoreName.replace(new RegExp(`\\b${sw}\\b`, 'g'), ' '); });
-    const tokens = uniqueStoreName.split(/\s+/).filter(t => t.length >= 3); 
+    
+    // 3. LOWERED to 2 characters to catch "AA", "RR", etc.
+    const tokens = uniqueStoreName.split(/\s+/).filter(t => t.length >= 2); 
     
     if (tokens.length === 0) return;
 
     let matchCount = 0;
-    tokens.forEach(t => { if (cleanInput.includes(t)) matchCount++; });
+    tokens.forEach(t => { 
+        if (cleanInput.includes(t)) matchCount++; 
+    });
     
     // Calculate percentage of matching identifying words
     const percentage = Math.round((matchCount / tokens.length) * 100);
@@ -39,7 +47,6 @@ const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
     }
   });
   
-  // Require at least a 33% match to even suggest it, otherwise return blank
   return highestScore >= 33 ? { name: bestMatch, score: highestScore } : { name: '', score: 0 };
 };
 

@@ -964,7 +964,7 @@ export default function VMDashboard() {
                   <div>
                     <h3 className="text-lg font-bold text-blue-900 flex items-center gap-2"><span>👻</span> Ghost Executions Detected</h3>
                     <p className="text-sm text-blue-700 mt-1">
-                      We found <strong>{ghostExecutions.length}</strong> reviewed photos tagged to brands, but the stores aren't enrolled in those campaigns.
+                    We found <strong>{ghostExecutions.length}</strong> reviewed photos tagged to brands, but the stores aren&apos;t enrolled in those campaigns.
                     </p>
                   </div>
                   <button onClick={handleAutoEnrollGhosts} disabled={isLoading} className="whitespace-nowrap bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors shadow-md">

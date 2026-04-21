@@ -98,7 +98,7 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
       if (campaigns) setAllCampaigns(campaigns);
     };
     fetchMasterData();
-  }, []);
+  }, [execution.store_name, execution.raw_text, isPazo]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

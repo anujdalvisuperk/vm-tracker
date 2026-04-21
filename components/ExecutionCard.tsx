@@ -1,9 +1,10 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
+// --- UPGRADED ALGORITHM: Now calculates a 0-100 Confidence Score ---
 const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
-  if (!rawText) return '';
+  if (!rawText) return { name: '', score: 0 };
   let cleanInput = rawText.toLowerCase().replace(/[.,!*'_]/g, ' ');
   const stopWords = ['superk', 'store', 'supermarket', 'mart', 'done', 'execution', 'photo', 'sir', 'check', 'vm'];
   
@@ -14,34 +15,54 @@ const findBestStoreMatch = (rawText: string, officialStores: string[]) => {
 
   officialStores.forEach(store => {
     const cleanStore = store.toLowerCase();
+    
+    // Exact Substring Match = 100% Confidence
     if (rawText.toLowerCase().includes(cleanStore)) {
-        bestMatch = store; highestScore = 999; return;
+        bestMatch = store; highestScore = 100; return;
     }
+    
     let uniqueStoreName = cleanStore;
     stopWords.forEach(sw => { uniqueStoreName = uniqueStoreName.replace(new RegExp(`\\b${sw}\\b`, 'g'), ' '); });
     const tokens = uniqueStoreName.split(/\s+/).filter(t => t.length >= 3); 
-    let score = 0;
-    tokens.forEach(t => { if (cleanInput.includes(t)) score += t.length; });
-    if (score > highestScore && score > 0) { highestScore = score; bestMatch = store; }
+    
+    if (tokens.length === 0) return;
+
+    let matchCount = 0;
+    tokens.forEach(t => { if (cleanInput.includes(t)) matchCount++; });
+    
+    // Calculate percentage of matching identifying words
+    const percentage = Math.round((matchCount / tokens.length) * 100);
+
+    if (percentage > highestScore && percentage > 0) { 
+      highestScore = percentage; 
+      bestMatch = store; 
+    }
   });
-  return highestScore > 0 ? bestMatch : '';
+  
+  // Require at least a 33% match to even suggest it, otherwise return blank
+  return highestScore >= 33 ? { name: bestMatch, score: highestScore } : { name: '', score: 0 };
 };
 
 export default function ExecutionCard({ execution, onUpdate, rejectionReasons }: { execution: any, onUpdate: () => void, rejectionReasons: any[] }) {
-  const [mappedStore, setMappedStore] = useState(execution.store_name || execution.extracted_store || '');
-  const initialCampaigns = execution.campaign_name ? execution.campaign_name.split(', ') : [];
-  const [selectedCampaigns, setSelectedCampaigns] = useState<string[]>(initialCampaigns);
-  
+  // Store States
   const [officialStores, setOfficialStores] = useState<string[]>([]);
   const [allCampaigns, setAllCampaigns] = useState<any[]>([]);
   
+  // UI States
+  const [storeSearchText, setStoreSearchText] = useState(''); // What the user types
+  const [mappedStore, setMappedStore] = useState(''); // The STRICT selected store
+  const [confidenceScore, setConfidenceScore] = useState(0);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Data States
+  const initialCampaigns = execution.campaign_name ? execution.campaign_name.split(', ') : [];
+  const [selectedCampaigns, setSelectedCampaigns] = useState<string[]>(initialCampaigns);
   const [actionState, setActionState] = useState<'idle' | 'approving' | 'rejecting'>('idle');
   const [rejectReason, setRejectReason] = useState('');
   const [customRejectReason, setCustomRejectReason] = useState('');
 
   const isProcessed = execution.status === 'approved' || execution.status === 'rejected';
-  
-  // NEW: Detect if this is a PAZO upload
   const isPazo = execution.raw_text === 'PAZO Import';
 
   useEffect(() => {
@@ -50,9 +71,20 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
       if (stores) {
         const storeNames = stores.map(s => s.name);
         setOfficialStores(storeNames);
-        if (!mappedStore && !isPazo && execution.raw_text) {
+        
+        // Initial setup for processed items
+        if (execution.store_name) {
+          setMappedStore(execution.store_name);
+          setStoreSearchText(execution.store_name);
+        } 
+        // Auto-mapping for new items
+        else if (!isPazo && execution.raw_text) {
           const guess = findBestStoreMatch(execution.raw_text, storeNames);
-          if (guess) setMappedStore(guess);
+          if (guess.name) {
+            setMappedStore(guess.name);
+            setStoreSearchText(guess.name);
+            setConfidenceScore(guess.score);
+          }
         }
       }
       const { data: campaigns } = await supabase.from('campaigns').select('*').order('name');
@@ -61,13 +93,37 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
     fetchMasterData();
   }, []);
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+        // If they clicked away and the text doesn't perfectly match a store, wipe it to force correct selection
+        if (!officialStores.includes(storeSearchText)) {
+          setMappedStore('');
+          setStoreSearchText('');
+        }
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [dropdownRef, storeSearchText, officialStores]);
+
+  const handleStoreSelect = (storeName: string) => {
+    setMappedStore(storeName);
+    setStoreSearchText(storeName);
+    setIsDropdownOpen(false);
+  };
+
   const toggleCampaign = (campName: string) => {
     setSelectedCampaigns(prev => prev.includes(campName) ? prev.filter(c => c !== campName) : [...prev, campName]);
   };
 
   const confirmApprove = async () => {
-    if (!mappedStore) return alert("Please map a valid Store before approving.");
-    const finalCampaignString = selectedCampaigns.length > 0 ? selectedCampaigns.join(', ') : null;
+    if (!mappedStore || !officialStores.includes(mappedStore)) return alert("CRITICAL: You must select a valid store from the dropdown list.");
+    if (selectedCampaigns.length === 0) return alert("Please tag at least one brand before approving.");
+    
+    const finalCampaignString = selectedCampaigns.join(', ');
     const { error } = await supabase.from('executions').update({ 
       status: 'approved', store_name: mappedStore, campaign_name: finalCampaignString,
       rejection_reason: null, reviewed_at: new Date().toISOString()
@@ -76,10 +132,14 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
   };
 
   const confirmReject = async () => {
+    if (!mappedStore || !officialStores.includes(mappedStore)) return alert("CRITICAL: You must select a valid store from the dropdown list.");
+    if (selectedCampaigns.length === 0) return alert("Please tag the attempted brand(s) so this rejection appears in the Analytics Matrix.");
+    
     if (!rejectReason) return alert("Please select a rejection reason.");
     if (rejectReason === 'Other (Type custom reason)' && !customRejectReason.trim()) return alert("Please type a custom reason.");
+    
     const finalReason = rejectReason === 'Other (Type custom reason)' ? customRejectReason : rejectReason;
-    const finalCampaignString = selectedCampaigns.length > 0 ? selectedCampaigns.join(', ') : null;
+    const finalCampaignString = selectedCampaigns.join(', ');
 
     const { error } = await supabase.from('executions').update({ 
       status: 'rejected', store_name: mappedStore, campaign_name: finalCampaignString,
@@ -102,19 +162,21 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
 
   const alignedCampaigns = allCampaigns.filter(c => c.stores && c.stores.includes(mappedStore));
   const unalignedCampaigns = allCampaigns.filter(c => !c.stores || !c.stores.includes(mappedStore));
+  
+  // Filter stores for the custom dropdown
+  const filteredStores = officialStores.filter(s => s.toLowerCase().includes(storeSearchText.toLowerCase()));
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex mb-6">
-      <div className="w-[350px] bg-slate-100 flex-shrink-0 relative group">
+    <div className="bg-white border border-slate-200 rounded-xl overflow-visible shadow-sm flex mb-6">
+      <div className="w-[350px] bg-slate-100 flex-shrink-0 relative group rounded-l-xl overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={execution.image_url} alt="Execution" className="w-full h-full object-cover cursor-zoom-in" onClick={() => window.open(execution.image_url, '_blank')} />
       </div>
 
-      <div className="flex-1 p-6 flex flex-col justify-between">
+      <div className="flex-1 p-6 flex flex-col justify-between overflow-visible">
         <div>
           <div className="flex justify-between items-start mb-6">
             <div>
-              {/* NEW: Dynamic Source Tagging */}
               <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isPazo ? 'text-indigo-500' : 'text-slate-400'}`}>
                 {isPazo ? 'PAZO Bulk Import' : 'Slack Submission'}
               </p>
@@ -125,16 +187,49 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
             <p className="text-xs text-slate-400 font-medium">{new Date(execution.submission_date).toLocaleString()}</p>
           </div>
 
-          <div className="mb-4">
-             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Mapped Store</label>
+          {/* --- STRICT SMART COMBOBOX --- */}
+          <div className="mb-4 relative" ref={dropdownRef}>
+             <div className="flex items-center gap-3 mb-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mapped Store</label>
+                {!isProcessed && confidenceScore > 0 && (
+                   <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${confidenceScore >= 80 ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-amber-100 text-amber-700 border border-amber-200 animate-pulse'}`}>
+                     {confidenceScore >= 80 ? `🤖 ${confidenceScore}% Match` : `⚠️ ${confidenceScore}% Match - Verify manually`}
+                   </span>
+                )}
+             </div>
+             
              <input 
-               type="text" placeholder="Search store name..."
-               className={`w-full max-w-md border rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-600 disabled:font-semibold ${!officialStores.includes(mappedStore) ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}
-               value={mappedStore} onChange={(e) => setMappedStore(e.target.value)} list={`store-options-${execution.id}`} disabled={isProcessed || actionState !== 'idle'}
+               type="text" 
+               placeholder="Search and select store..."
+               className={`w-full max-w-md border rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors disabled:bg-slate-50 disabled:text-slate-600 disabled:font-semibold ${(!mappedStore || !officialStores.includes(mappedStore)) && !isProcessed ? 'border-amber-400 bg-amber-50 ring-4 ring-amber-50' : 'border-slate-300'}`}
+               value={storeSearchText} 
+               onChange={(e) => {
+                 setStoreSearchText(e.target.value);
+                 setIsDropdownOpen(true);
+                 if (e.target.value !== mappedStore) setMappedStore(''); // Invalidate strict match if they type
+               }} 
+               onFocus={() => !isProcessed && setIsDropdownOpen(true)}
+               disabled={isProcessed || actionState !== 'idle'}
              />
-             <datalist id={`store-options-${execution.id}`}>
-               {officialStores.map((s, i) => <option key={i} value={s} />)}
-             </datalist>
+             
+             {/* Dropdown Menu */}
+             {isDropdownOpen && !isProcessed && (
+               <div className="absolute z-50 w-full max-w-md mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                 {filteredStores.length > 0 ? (
+                   filteredStores.map((store, i) => (
+                     <div 
+                       key={i} 
+                       onClick={() => handleStoreSelect(store)}
+                       className="px-4 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 cursor-pointer border-b border-slate-50 last:border-0"
+                     >
+                       {store}
+                     </div>
+                   ))
+                 ) : (
+                   <div className="px-4 py-3 text-sm text-slate-400 italic">No exact store found. Please try another name.</div>
+                 )}
+               </div>
+             )}
           </div>
         </div>
 
@@ -163,12 +258,21 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
             </div>
           )}
 
+          {/* MAIN ACTION BUTTONS: Now permanently disabled if the strict map is invalid */}
           {!isProcessed && actionState === 'idle' && (
             <div className="flex gap-2">
-              <button onClick={() => setActionState('approving')} className="flex-1 bg-green-50 text-green-700 font-bold py-3 px-4 rounded-lg border border-green-200 hover:bg-green-100 transition-colors">
+              <button 
+                onClick={() => setActionState('approving')} 
+                disabled={!officialStores.includes(mappedStore)}
+                className="flex-1 bg-green-50 text-green-700 font-bold py-3 px-4 rounded-lg border border-green-200 hover:bg-green-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
                 ✓ Approve & Tag
               </button>
-              <button onClick={() => setActionState('rejecting')} className="w-32 bg-red-50 text-red-700 font-bold py-3 px-4 rounded-lg border border-red-200 hover:bg-red-100 transition-colors">
+              <button 
+                onClick={() => setActionState('rejecting')} 
+                disabled={!officialStores.includes(mappedStore)}
+                className="w-32 bg-red-50 text-red-700 font-bold py-3 px-4 rounded-lg border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
                 Reject
               </button>
               <button onClick={handleDelete} title="Delete" className="w-12 flex items-center justify-center bg-slate-50 text-slate-500 font-bold py-3 rounded-lg border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors">

@@ -205,19 +205,35 @@ export default function VMDashboard() {
 
   const fetchData = async () => {
     setIsLoading(true);
-    const { data: qData } = await supabase.from('executions').select('*').eq('status', 'pending_admin').order('submission_date', { ascending: false });
+    
+    // BUMPED LIMITS: Added .limit(50000) to ensure we don't drop older data
+    const { data: qData } = await supabase.from('executions')
+      .select('*')
+      .eq('status', 'pending_admin')
+      .order('submission_date', { ascending: false })
+      .limit(10000);
     if (qData) setPendingExecutions(qData);
 
-    const { data: hData } = await supabase.from('executions').select('*').order('submission_date', { ascending: false });
+    const { data: hData } = await supabase.from('executions')
+      .select('*')
+      .order('submission_date', { ascending: false })
+      .limit(50000); // 50,000 executions limit for the master history
     if (hData) setAllExecutions(hData);
 
-    const { data: sData } = await supabase.from('stores').select('*').order('name');
+    const { data: sData } = await supabase.from('stores')
+      .select('*')
+      .order('name')
+      .limit(5000);
     if (sData) setStoresList(sData);
 
-    const { data: cData } = await supabase.from('campaigns').select('*').order('created_at', { ascending: false });
+    const { data: cData } = await supabase.from('campaigns')
+      .select('*')
+      .order('created_at', { ascending: false });
     if (cData) setCampaignsList(cData);
     
-    const { data: rData } = await supabase.from('rejection_reasons').select('*').order('id', { ascending: true });
+    const { data: rData } = await supabase.from('rejection_reasons')
+      .select('*')
+      .order('id', { ascending: true });
     if (rData) setReasonsList(rData);
 
     setIsLoading(false);
@@ -245,7 +261,7 @@ export default function VMDashboard() {
   }, [allExecutions, storesList]);
 
   // --- ORPHAN RESOLUTION HANDLER ---
-  const handleOrphanResolve = async (executionId: number, correctedStoreName: string, selectedCampaignName: string, status: 'approved' | 'rejected', rejectReason: string | null) => {
+  const handleOrphanResolve = async (executionId: string, correctedStoreName: string, selectedCampaignName: string, status: 'approved' | 'rejected', rejectReason: string | null) => {
     
     // 1. If they typed a completely new correct store name, auto-add it to the Master Store List
     const storeExists = storesList.some(s => s.name === correctedStoreName);
@@ -278,7 +294,7 @@ export default function VMDashboard() {
     fetchData();
   };
 
-  const handleOrphanDelete = async (executionId: number) => {
+  const handleOrphanDelete = async (executionId: string) => {
     if (confirm("Are you sure you want to permanently delete this orphaned record?")) {
       await supabase.from('executions').delete().eq('id', executionId);
       fetchData();

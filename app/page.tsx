@@ -38,6 +38,7 @@ const OrphanCard = ({ execution, storesList, campaignsList, onResolve, onDelete 
   return (
     <div className="bg-white/80 backdrop-blur-md border border-amber-200 rounded-2xl overflow-visible shadow-lg flex mb-6 transition-all hover:shadow-xl">
       <div className="w-[300px] bg-slate-100 flex-shrink-0 relative group rounded-l-2xl overflow-hidden border-r border-slate-100">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={execution.image_url} alt="Execution" className="w-full h-full object-cover cursor-zoom-in hover:scale-105 transition-transform duration-500" onClick={() => window.open(execution.image_url, '_blank')} />
         <div className="absolute top-3 left-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-md uppercase tracking-widest">Orphaned</div>
       </div>
@@ -81,7 +82,7 @@ export default function VMDashboard() {
   // NEW: Updated View Types to include 'login'
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginPassword, setLoginPassword] = useState('');
-  const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'pazo' | 'orphans' | 'missing' | 'review' | 'settings' | 'login'>('dashboard');
+  const [mainView, setMainView] = useState<'dashboard' | 'queue' | 'pazo' | 'orphans' | 'missing' | 'review' | 'settings' | 'login' | 'guide' | 'leaderboard'>('dashboard');
   
   const ITEMS_PER_PAGE = 10;
 
@@ -521,7 +522,7 @@ export default function VMDashboard() {
               <button onClick={() => { setSelectedPhoto(null); setModalActionState('idle'); }} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-all font-bold">✕</button>
             </div>
             
-            <div className="bg-slate-100 flex items-center justify-center p-6"><img src={selectedPhoto.image} alt="Execution" className="max-h-[50vh] object-contain rounded-xl shadow-sm" /></div>
+            <div className="bg-slate-100 flex items-center justify-center p-6">{/* eslint-disable-next-line @next/next/no-img-element */}<img src={selectedPhoto.image} alt="Execution" className="max-h-[50vh] object-contain rounded-xl shadow-sm" /></div>
 
             {selectedPhoto.id && (
               <div className="p-6 bg-slate-50/80 border-t border-slate-100">

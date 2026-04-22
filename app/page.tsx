@@ -491,6 +491,11 @@ export default function VMDashboard() {
           </div>
         )}
 
+        {/* VIEW: USER GUIDE (Protected) */}
+     {mainView === 'guide' && isAuthenticated && (
+       <UserGuide />
+     )}
+
       </div>
 
       {/* 🚀 GLOBAL PHOTO VIEWER MODAL (Only accessible if Authenticated) */}

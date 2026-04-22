@@ -499,9 +499,14 @@ export default function VMDashboard() {
        <UserGuide />
      )}
 
+      {/* VIEW: LEADERBOARD */}
       {mainView === 'leaderboard' && (
-        <Leaderboard leaderboardData={leaderboardData} />
-      )}
+          <Leaderboard 
+             personnelList={personnelList} 
+             storesList={storesList} 
+             matrixData={matrixData} 
+          />
+        )}
 
       </div>
 

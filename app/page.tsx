@@ -5,6 +5,7 @@ import ExecutionCard from '../components/ExecutionCard';
 import { useVMData } from '../hooks/useVMData'; 
 import AnalyticsMatrix from '../views/AnalyticsMatrix';
 import MasterSettings from '../views/MasterSettings';
+import UserGuide from '../views/UserGuide';
 
 const Pagination = ({ total, page, setPage, perPage = 10 }: any) => {
   const maxPages = Math.ceil(total / perPage);
@@ -110,7 +111,7 @@ export default function VMDashboard() {
 
   // 🧠 THE BRAIN (from Hook)
   const {
-    pendingExecutions, allExecutions, storesList, campaignsList, reasonsList,
+    pendingExecutions, allExecutions, storesList, campaignsList, reasonsList, personnelList,
     isLoading, setIsLoading, fetchData, orphanExecutions, ghostExecutions,
     matrixData, generalMatrixData
   } = useVMData();
@@ -263,11 +264,12 @@ export default function VMDashboard() {
 
   const protectedNav = [
     { id: 'queue', icon: '⚡️', label: 'Admin Queue', badge: slackPending.length, color: 'bg-amber-500' },
-    { id: 'pazo', icon: '📤', label: 'PAZO Import', badge: pazoPending.length, color: 'bg-indigo-500' },
+    { id: 'pazo', icon: '📤', label: 'Executions Import', badge: pazoPending.length, color: 'bg-indigo-500' },
     { id: 'orphans', icon: '🚑', label: 'Recovery', badge: orphanExecutions.length + ghostExecutions.length, color: 'bg-red-500' },
     { id: 'missing', icon: '⚠️', label: 'Missing Photos', badge: missingExecutions.length, color: 'bg-red-500' },
     { id: 'review', icon: '🗂️', label: 'Execution History' },
-    { id: 'settings', icon: '⚙️', label: 'Master Settings' }
+    { id: 'settings', icon: '⚙️', label: 'Master Settings' },
+    { id: 'guide', icon: '📖', label: 'System Manual' }
   ];
 
   return (
@@ -353,7 +355,13 @@ export default function VMDashboard() {
 
         {/* VIEW: SETTINGS (Protected) */}
         {mainView === 'settings' && isAuthenticated && (
-          <MasterSettings storesList={storesList} campaignsList={campaignsList} reasonsList={reasonsList} fetchData={fetchData} />
+          <MasterSettings 
+          storesList={storesList} 
+          campaignsList={campaignsList} 
+          reasonsList={reasonsList} 
+          personnelList={personnelList} // 👈 Add this
+          fetchData={fetchData} 
+        />
         )}
 
         {/* VIEW: SLACK ADMIN QUEUE (Protected) */}

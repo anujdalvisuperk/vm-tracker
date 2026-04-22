@@ -9,6 +9,7 @@ export function useVMData() {
   const [campaignsList, setCampaignsList] = useState<any[]>([]);
   const [reasonsList, setReasonsList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [personnelList, setPersonnelList] = useState<any[]>([]);
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -41,6 +42,11 @@ export function useVMData() {
       .select('*')
       .order('id', { ascending: true });
     if (rData) setReasonsList(rData);
+
+    const { data: pData } = await supabase.from('personnel')
+      .select('*')
+      .order('name');
+    if (pData) setPersonnelList(pData);
 
     setIsLoading(false);
   };
@@ -167,6 +173,7 @@ export function useVMData() {
     campaignsList, setCampaignsList,
     reasonsList, setReasonsList,
     isLoading, setIsLoading,
+    personnelList, setPersonnelList,
     fetchData,
     orphanExecutions,
     ghostExecutions,

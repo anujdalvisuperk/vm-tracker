@@ -6,11 +6,13 @@ export default function Leaderboard({ leaderboardData }: any) {
   const [metricFilter, setMetricFilter] = useState<'submission' | 'approval'>('submission');
 
   const filteredList = useMemo(() => {
-    const list = leaderboardData.filter(p => 
+    // FIXED: Explicitly typed 'p' as 'any'
+    const list = leaderboardData.filter((p: any) => 
       roleFilter === 'ASM' ? p.role === 'ASM' : (p.role === 'SAE' || p.role === 'Promoter')
     );
     
-    return [...list].sort((a, b) => {
+    // FIXED: Explicitly typed 'a' and 'b' as 'any'
+    return [...list].sort((a: any, b: any) => {
       const valA = metricFilter === 'submission' ? a.stats.submissionRate : a.stats.approvalRate;
       const valB = metricFilter === 'submission' ? b.stats.submissionRate : b.stats.approvalRate;
       return valB - valA;
@@ -86,7 +88,8 @@ export default function Leaderboard({ leaderboardData }: any) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {theRest.map((person, i) => {
+            {/* FIXED: Explicitly typed 'person' as 'any' and 'i' as 'number' */}
+            {theRest.map((person: any, i: number) => {
               const score = metricFilter === 'submission' ? person.stats.submissionRate : person.stats.approvalRate;
               return (
                 <tr key={person.id} className="hover:bg-slate-50/50 transition-colors">

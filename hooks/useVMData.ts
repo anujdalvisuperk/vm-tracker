@@ -166,6 +166,46 @@ export function useVMData() {
     });
   }, [campaignsList, matrixData]);
 
+  // --- ENGINE: LEADERBOARD CALCULATOR ---
+  const leaderboardData = useMemo(() => {
+    const calculateScore = (pId: string, roleType: 'asm' | 'staff') => {
+      // Find all stores assigned to this person
+      const assignedStores = storesList.filter(s => 
+        roleType === 'asm' ? s.asm_id === pId : s.field_staff_id === pId
+      ).map(s => s.name);
+
+      if (assignedStores.length === 0) return null;
+
+      // Get all matrix rows for these stores
+      const rows = matrixData.filter(r => assignedStores.includes(r.store));
+      if (rows.length === 0) return { submissionRate: 0, approvalRate: 0, totalStores: assignedStores.length };
+
+      let totalSlots = rows.length * 4; // 4 weeks per store/campaign
+      let totalSubmitted = 0;
+      let totalApproved = 0;
+
+      rows.forEach(r => {
+        [r.w1, r.w2, r.w3, r.w4].forEach(w => {
+          if (w.status !== 'Missed') totalSubmitted++;
+          if (w.status === 'Approved') totalApproved++;
+        });
+      });
+
+      return {
+        submissionRate: Math.round((totalSubmitted / totalSlots) * 100),
+        approvalRate: totalSubmitted > 0 ? Math.round((totalApproved / totalSubmitted) * 100) : 0,
+        totalStores: assignedStores.length
+      };
+    };
+
+    return personnelList.map(person => ({
+      ...person,
+      stats: calculateScore(person.id, person.role === 'ASM' ? 'asm' : 'staff')
+    })).filter(p => p.stats !== null); // Only show people with assigned stores
+  }, [personnelList, storesList, matrixData]);
+
+  
+
   return {
     pendingExecutions, setPendingExecutions,
     allExecutions, setAllExecutions,
@@ -178,6 +218,7 @@ export function useVMData() {
     orphanExecutions,
     ghostExecutions,
     matrixData,
-    generalMatrixData
+    generalMatrixData,
+    leaderboardData
   };
 }

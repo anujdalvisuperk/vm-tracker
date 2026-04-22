@@ -6,6 +6,7 @@ import { useVMData } from '../hooks/useVMData';
 import AnalyticsMatrix from '../views/AnalyticsMatrix';
 import MasterSettings from '../views/MasterSettings';
 import UserGuide from '../views/UserGuide';
+import Leaderboard from '../views/Leaderboard';
 
 const Pagination = ({ total, page, setPage, perPage = 10 }: any) => {
   const maxPages = Math.ceil(total / perPage);
@@ -113,7 +114,7 @@ export default function VMDashboard() {
   const {
     pendingExecutions, allExecutions, storesList, campaignsList, reasonsList, personnelList,
     isLoading, setIsLoading, fetchData, orphanExecutions, ghostExecutions,
-    matrixData, generalMatrixData
+    matrixData, generalMatrixData, leaderboardData
   } = useVMData();
 
   // --- DERIVED DATA ---
@@ -269,7 +270,8 @@ export default function VMDashboard() {
     { id: 'missing', icon: '⚠️', label: 'Missing Photos', badge: missingExecutions.length, color: 'bg-red-500' },
     { id: 'review', icon: '🗂️', label: 'Execution History' },
     { id: 'settings', icon: '⚙️', label: 'Master Settings' },
-    { id: 'guide', icon: '📖', label: 'System Manual' }
+    { id: 'guide', icon: '📖', label: 'System Manual' },
+    { id: 'leaderboard', icon: '🏆', label: 'Leaderboard' },
   ];
 
   return (
@@ -495,6 +497,10 @@ export default function VMDashboard() {
      {mainView === 'guide' && isAuthenticated && (
        <UserGuide />
      )}
+
+      {mainView === 'leaderboard' && (
+        <Leaderboard leaderboardData={leaderboardData} />
+      )}
 
       </div>
 

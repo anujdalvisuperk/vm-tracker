@@ -5,42 +5,51 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
   const [roleFilter, setRoleFilter] = useState<'ASM' | 'SAE_PROMOTER'>('SAE_PROMOTER');
   const [metricFilter, setMetricFilter] = useState<'submission' | 'approval'>('submission');
   const [weekFilter, setWeekFilter] = useState<'All' | 'w1' | 'w2' | 'w3' | 'w4'>('All');
+  
+  // State for the Drill-Down Modal
+  const [selectedPerson, setSelectedPerson] = useState<any | null>(null);
 
   // --- DYNAMIC CALCULATOR ENGINE ---
   const leaderboardData = useMemo(() => {
     if (!personnelList || !storesList || !matrixData) return [];
 
     const calculateScore = (pId: string, roleType: 'asm' | 'staff') => {
-      // 1. Find all stores assigned to this person
+      // 1. Find assigned stores
       const assignedStores = storesList.filter((s: any) => 
         roleType === 'asm' ? s.asm_id === pId : s.field_staff_id === pId
       ).map((s: any) => s.name);
 
       if (assignedStores.length === 0) return null;
 
-      // 2. Get all matrix rows for these stores
+      // 2. Get matrix rows for these stores
       const rows = matrixData.filter((r: any) => assignedStores.includes(r.store));
-      if (rows.length === 0) return { submissionRate: 0, approvalRate: 0, totalStores: assignedStores.length };
+      
+      let expected = 0;
+      let submitted = 0;
+      let approved = 0;
+      let rejected = 0;
 
-      let totalSlots = 0;
-      let totalSubmitted = 0;
-      let totalApproved = 0;
-
-      // 3. Calculate based on the selected Week Filter
+      // 3. Calculate detailed stats
       rows.forEach((r: any) => {
         const weeksToCheck = weekFilter === 'All' ? [r.w1, r.w2, r.w3, r.w4] : [r[weekFilter]];
-        totalSlots += weeksToCheck.length;
+        expected += weeksToCheck.length;
         
         weeksToCheck.forEach((w: any) => {
-          if (w.status !== 'Missed') totalSubmitted++;
-          if (w.status === 'Approved') totalApproved++;
+          if (w && w.status) {
+             if (w.status !== 'Missed' && w.status !== 'Unassigned') submitted++;
+             if (w.status === 'Approved') approved++;
+             if (w.status === 'Rejected') rejected++;
+          }
         });
       });
 
+      const missed = expected - submitted;
+
       return {
-        submissionRate: totalSlots > 0 ? Math.round((totalSubmitted / totalSlots) * 100) : 0,
-        approvalRate: totalSubmitted > 0 ? Math.round((totalApproved / totalSubmitted) * 100) : 0,
-        totalStores: assignedStores.length
+        submissionRate: expected > 0 ? Math.round((submitted / expected) * 100) : 0,
+        approvalRate: submitted > 0 ? Math.round((approved / submitted) * 100) : 0,
+        totalStores: assignedStores.length,
+        details: { expected, submitted, approved, rejected, missed, rows }
       };
     };
 
@@ -51,7 +60,7 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
   }, [personnelList, storesList, matrixData, weekFilter]);
 
 
-  // --- SORTING & FILTERING LIST ---
+  // --- SORTING & FILTERING ---
   const filteredList = useMemo(() => {
     const list = leaderboardData.filter((p: any) => 
       roleFilter === 'ASM' ? p.role === 'ASM' : (p.role === 'SAE' || p.role === 'Promoter')
@@ -60,60 +69,33 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
     return [...list].sort((a: any, b: any) => {
       const valA = metricFilter === 'submission' ? a.stats.submissionRate : a.stats.approvalRate;
       const valB = metricFilter === 'submission' ? b.stats.submissionRate : b.stats.approvalRate;
-      return valB - valA; // Sort highest to lowest
+      return valB - valA;
     });
   }, [leaderboardData, roleFilter, metricFilter]);
 
-  const topThree = filteredList.slice(0, 3);
-  const theRest = filteredList.slice(3);
 
-  const RankCard = ({ person, rank }: { person: any, rank: number }) => (
-    <div className={`relative bg-white p-6 rounded-3xl border-2 transition-all hover:scale-105 shadow-xl ${
-      rank === 1 ? 'border-amber-400 scale-110 z-10' : rank === 2 ? 'border-slate-300' : 'border-orange-300'
-    }`}>
-      <div className={`absolute -top-4 -right-4 w-12 h-12 rounded-full flex items-center justify-center text-xl shadow-lg font-black text-white ${
-        rank === 1 ? 'bg-amber-400' : rank === 2 ? 'bg-slate-400' : 'bg-orange-500'
-      }`}>
-        {rank === 1 ? '🥇' : rank === 2 ? '🥈' : '🥉'}
-      </div>
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{person.role}</p>
-      <h4 className="text-xl font-black text-slate-900 truncate mb-4">{person.name}</h4>
-      <div className="space-y-3">
-        <div>
-          <div className="flex justify-between text-[10px] font-bold mb-1">
-            <span className="text-slate-400">COMPLIANCE</span>
-            <span className="text-blue-600">{metricFilter === 'submission' ? person.stats.submissionRate : person.stats.approvalRate}%</span>
-          </div>
-          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-            <div 
-              className={`h-full transition-all duration-1000 ${rank === 1 ? 'bg-amber-400' : 'bg-blue-500'}`}
-              style={{ width: `${metricFilter === 'submission' ? person.stats.submissionRate : person.stats.approvalRate}%` }}
-            />
-          </div>
-        </div>
-        <p className="text-[10px] font-bold text-slate-400">{person.stats.totalStores} Stores Managed</p>
-      </div>
-    </div>
-  );
+  // --- HELPER FOR RENDERING STATUS BADGES IN MODAL ---
+  const renderStatus = (status: string) => {
+    if (!status || status === 'Missed') return <span className="text-slate-400 font-bold">Missed</span>;
+    if (status === 'Approved') return <span className="text-green-600 font-black">Approved</span>;
+    if (status === 'Rejected') return <span className="text-red-600 font-black">Rejected</span>;
+    return <span className="text-amber-500 font-bold">Pending</span>;
+  };
 
   return (
     <div className="max-w-6xl mx-auto animate-in fade-in duration-500 pb-20">
+      
+      {/* --- HEADER & FILTERS --- */}
       <div className="flex flex-col md:flex-row justify-between items-end mb-12 gap-6">
         <div>
           <h2 className="text-4xl font-black text-slate-900 tracking-tight">Field Leaderboard</h2>
           <p className="text-slate-500 mt-2 font-medium text-lg">Real-time performance ranking of the field team.</p>
         </div>
         
-        {/* FILTERS */}
         <div className="flex flex-wrap gap-3">
-          {/* Week Filter Dropdown */}
           <div className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm flex items-center pr-3">
              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-3 mr-2">Time:</span>
-             <select 
-               value={weekFilter} 
-               onChange={(e) => setWeekFilter(e.target.value as any)}
-               className="border-none bg-slate-50 text-slate-700 text-sm font-bold rounded-xl px-3 py-2 outline-none cursor-pointer hover:bg-slate-100 transition-colors"
-             >
+             <select value={weekFilter} onChange={(e) => setWeekFilter(e.target.value as any)} className="border-none bg-slate-50 text-slate-700 text-sm font-bold rounded-xl px-3 py-2 outline-none cursor-pointer hover:bg-slate-100 transition-colors">
                 <option value="All">Full Month</option>
                 <option value="w1">Week 1 (1st - 7th)</option>
                 <option value="w2">Week 2 (8th - 14th)</option>
@@ -134,53 +116,134 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
         </div>
       </div>
 
-      {/* TOP 3 CARDS */}
+      {/* --- MAIN TABLE --- */}
       {filteredList.length > 0 ? (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-12 mb-20 px-4 md:px-0 mt-8">
-            {topThree[1] && <div className="mt-8"><RankCard person={topThree[1]} rank={2} /></div>}
-            {topThree[0] && <RankCard person={topThree[0]} rank={1} />}
-            {topThree[2] && <div className="mt-12"><RankCard person={topThree[2]} rank={3} /></div>}
-          </div>
-
-          {/* THE REST LIST */}
-          {theRest.length > 0 && (
-            <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50">
-                  <tr className="text-[10px] text-slate-400 uppercase tracking-widest border-b border-slate-100">
-                    <th className="p-6 font-bold">Rank</th>
-                    <th className="p-6 font-bold">Name</th>
-                    <th className="p-6 font-bold">Role</th>
-                    <th className="p-6 font-bold">Stores</th>
-                    <th className="p-6 font-bold text-right">Score</th>
+        <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50">
+              <tr className="text-[10px] text-slate-400 uppercase tracking-widest border-b border-slate-100">
+                <th className="p-6 font-bold w-24">Rank</th>
+                <th className="p-6 font-bold">Name</th>
+                <th className="p-6 font-bold">Role</th>
+                <th className="p-6 font-bold">Stores Managed</th>
+                <th className="p-6 font-bold w-64">Performance</th>
+                <th className="p-6 font-bold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {filteredList.map((person: any, i: number) => {
+                const score = metricFilter === 'submission' ? person.stats.submissionRate : person.stats.approvalRate;
+                const isTop3 = i < 3;
+                
+                return (
+                  <tr key={person.id} className="hover:bg-slate-50/80 transition-colors group">
+                    <td className="p-6">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${i === 0 ? 'bg-amber-100 text-amber-600' : i === 1 ? 'bg-slate-200 text-slate-600' : i === 2 ? 'bg-orange-100 text-orange-600' : 'bg-slate-50 text-slate-400'}`}>
+                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
+                      </div>
+                    </td>
+                    <td className="p-6 font-black text-slate-900 text-lg">{person.name}</td>
+                    <td className="p-6"><span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">{person.role}</span></td>
+                    <td className="p-6 font-bold text-slate-500">{person.stats.totalStores}</td>
+                    <td className="p-6">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all duration-1000 ${score > 80 ? 'bg-green-500' : score > 50 ? 'bg-amber-400' : 'bg-red-500'}`} style={{ width: `${score}%` }} />
+                        </div>
+                        <span className={`font-black text-sm ${score > 80 ? 'text-green-600' : score > 50 ? 'text-amber-600' : 'text-red-600'}`}>{score}%</span>
+                      </div>
+                    </td>
+                    <td className="p-6 text-right">
+                      <button onClick={() => setSelectedPerson(person)} className="px-4 py-2 bg-white border-2 border-slate-100 text-slate-600 font-bold text-xs rounded-xl hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all active:scale-95">View Details</button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {theRest.map((person: any, i: number) => {
-                    const score = metricFilter === 'submission' ? person.stats.submissionRate : person.stats.approvalRate;
-                    return (
-                      <tr key={person.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="p-6 font-black text-slate-300"># {i + 4}</td>
-                        <td className="p-6 font-bold text-slate-800">{person.name}</td>
-                        <td className="p-6 text-xs font-bold text-slate-500">{person.role}</td>
-                        <td className="p-6 text-xs font-bold text-slate-500">{person.stats.totalStores}</td>
-                        <td className="p-6 text-right">
-                          <span className={`font-black ${score > 80 ? 'text-green-500' : score > 50 ? 'text-amber-500' : 'text-red-500'}`}>{score}%</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="bg-white p-16 rounded-[2rem] border border-slate-100 shadow-sm text-center">
           <div className="text-4xl mb-4">🤷‍♂️</div>
-          <h3 className="text-2xl font-black text-slate-800 mb-2">No Roster Data Found</h3>
-          <p className="text-slate-500 font-medium">Head over to the Master Settings to map your ASMs and Field Staff to their stores!</p>
+          <h3 className="text-2xl font-black text-slate-800 mb-2">No Data Found</h3>
+          <p className="text-slate-500 font-medium">Map your team in Settings or adjust the Time filter.</p>
+        </div>
+      )}
+
+      {/* --- DRILL-DOWN MODAL --- */}
+      {selectedPerson && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-100">
+            
+            {/* Modal Header */}
+            <div className="p-8 border-b border-slate-100 flex justify-between items-start bg-slate-50/50">
+              <div>
+                <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">{selectedPerson.role} Performance</p>
+                <h3 className="font-black text-3xl text-slate-900">{selectedPerson.name}</h3>
+              </div>
+              <button onClick={() => setSelectedPerson(null)} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-all font-bold">✕</button>
+            </div>
+
+            <div className="overflow-y-auto">
+               {/* Metrics Grid */}
+               <div className="p-8 bg-white border-b border-slate-100">
+                 <h4 className="text-sm font-black text-slate-800 mb-4 uppercase tracking-widest">Aggregate Metrics ({weekFilter === 'All' ? 'Full Month' : weekFilter.toUpperCase()})</h4>
+                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center"><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Expected</p><p className="text-3xl font-black text-slate-800">{selectedPerson.stats.details.expected}</p></div>
+                   <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 text-center"><p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Submitted</p><p className="text-3xl font-black text-blue-600">{selectedPerson.stats.details.submitted}</p></div>
+                   <div className="bg-green-50 p-4 rounded-2xl border border-green-100 text-center"><p className="text-[10px] font-bold text-green-500 uppercase tracking-widest mb-1">Approved</p><p className="text-3xl font-black text-green-600">{selectedPerson.stats.details.approved}</p></div>
+                   <div className="bg-red-50 p-4 rounded-2xl border border-red-100 text-center"><p className="text-[10px] font-bold text-red-400 uppercase tracking-widest mb-1">Rejected</p><p className="text-3xl font-black text-red-600">{selectedPerson.stats.details.rejected}</p></div>
+                   <div className="bg-slate-800 p-4 rounded-2xl border border-slate-900 text-center"><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Missed</p><p className="text-3xl font-black text-white">{selectedPerson.stats.details.missed}</p></div>
+                 </div>
+               </div>
+
+               {/* Store Breakdown Table */}
+               <div className="p-8 bg-slate-50/30">
+                 <h4 className="text-sm font-black text-slate-800 mb-4 uppercase tracking-widest">Execution Breakdown</h4>
+                 <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+                   <table className="w-full text-left">
+                     <thead className="bg-slate-50 border-b border-slate-100 text-[10px] text-slate-400 uppercase tracking-widest">
+                       <tr>
+                         <th className="p-4 font-bold">Store</th>
+                         <th className="p-4 font-bold">Campaign</th>
+                         {weekFilter === 'All' ? (
+                           <>
+                             <th className="p-4 font-bold text-center">W1 Status</th>
+                             <th className="p-4 font-bold text-center">W2 Status</th>
+                             <th className="p-4 font-bold text-center">W3 Status</th>
+                             <th className="p-4 font-bold text-center">W4 Status</th>
+                           </>
+                         ) : (
+                           <th className="p-4 font-bold text-center">Target Week Status</th>
+                         )}
+                       </tr>
+                     </thead>
+                     <tbody className="divide-y divide-slate-50 text-sm">
+                       {selectedPerson.stats.details.rows.map((row: any, idx: number) => (
+                         <tr key={idx} className="hover:bg-slate-50/50">
+                           <td className="p-4 font-bold text-slate-800">{row.store}</td>
+                           <td className="p-4 font-bold text-slate-500">{row.campaign}</td>
+                           {weekFilter === 'All' ? (
+                             <>
+                               <td className="p-4 text-center text-xs">{renderStatus(row.w1?.status)}</td>
+                               <td className="p-4 text-center text-xs">{renderStatus(row.w2?.status)}</td>
+                               <td className="p-4 text-center text-xs">{renderStatus(row.w3?.status)}</td>
+                               <td className="p-4 text-center text-xs">{renderStatus(row.w4?.status)}</td>
+                             </>
+                           ) : (
+                             <td className="p-4 text-center text-xs">{renderStatus(row[weekFilter]?.status)}</td>
+                           )}
+                         </tr>
+                       ))}
+                       {selectedPerson.stats.details.rows.length === 0 && (
+                         <tr><td colSpan={6} className="p-8 text-center text-slate-400 font-medium">No campaign data available for these stores.</td></tr>
+                       )}
+                     </tbody>
+                   </table>
+                 </div>
+               </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

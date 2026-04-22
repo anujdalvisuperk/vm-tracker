@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 
-export default function Leaderboard({ leaderboardData }) {
+export default function Leaderboard({ leaderboardData }: any) {
   const [roleFilter, setRoleFilter] = useState<'ASM' | 'SAE_PROMOTER'>('SAE_PROMOTER');
   const [metricFilter, setMetricFilter] = useState<'submission' | 'approval'>('submission');
 

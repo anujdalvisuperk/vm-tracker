@@ -11,57 +11,52 @@ export function useVMData() {
   const [isLoading, setIsLoading] = useState(false);
   const [personnelList, setPersonnelList] = useState<any[]>([]);
 
+  // --- GLOBAL TIME STATE ---
+  const [matrixYear, setMatrixYear] = useState<string>(new Date().getFullYear().toString());
+  const [matrixMonth, setMatrixMonth] = useState<string>((new Date().getMonth() + 1).toString());
+
+  useEffect(() => {
+    const savedYear = localStorage.getItem('vm_global_year');
+    if (savedYear) setMatrixYear(savedYear);
+    const savedMonth = localStorage.getItem('vm_global_month');
+    if (savedMonth) setMatrixMonth(savedMonth);
+  }, []);
+
+  const updateYear = (y: string) => { setMatrixYear(y); localStorage.setItem('vm_global_year', y); };
+  const updateMonth = (m: string) => { setMatrixMonth(m); localStorage.setItem('vm_global_month', m); };
+
   const fetchData = async () => {
     setIsLoading(true);
     
-    const { data: qData } = await supabase.from('executions')
-      .select('*')
-      .eq('status', 'pending_admin')
-      .order('submission_date', { ascending: false })
-      .limit(10000);
+    const { data: qData } = await supabase.from('executions').select('*').eq('status', 'pending_admin').order('submission_date', { ascending: false }).limit(10000);
     if (qData) setPendingExecutions(qData);
 
-    const { data: hData } = await supabase.from('executions')
-      .select('*')
-      .order('submission_date', { ascending: false })
-      .limit(50000);
+    const { data: hData } = await supabase.from('executions').select('*').order('submission_date', { ascending: false }).limit(50000);
     if (hData) setAllExecutions(hData);
 
-    const { data: sData } = await supabase.from('stores')
-      .select('*')
-      .order('name')
-      .limit(5000);
+    const { data: sData } = await supabase.from('stores').select('*').order('name').limit(5000);
     if (sData) setStoresList(sData);
 
-    const { data: cData } = await supabase.from('campaigns')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const { data: cData } = await supabase.from('campaigns').select('*').order('created_at', { ascending: false });
     if (cData) setCampaignsList(cData);
     
-    const { data: rData } = await supabase.from('rejection_reasons')
-      .select('*')
-      .order('id', { ascending: true });
+    const { data: rData } = await supabase.from('rejection_reasons').select('*').order('id', { ascending: true });
     if (rData) setReasonsList(rData);
 
-    const { data: pData } = await supabase.from('personnel')
-      .select('*')
-      .order('name');
+    const { data: pData } = await supabase.from('personnel').select('*').order('name');
     if (pData) setPersonnelList(pData);
 
     setIsLoading(false);
   };
 
-  useEffect(() => { 
-    fetchData(); 
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
-  // --- ENGINE: ORPHANS ---
+  // --- ENGINE: ORPHANS & GHOSTS ---
   const orphanExecutions = useMemo(() => {
     const validStoreNames = storesList.map(s => s.name);
     return allExecutions.filter(e => e.store_name && !validStoreNames.includes(e.store_name));
   }, [allExecutions, storesList]);
 
-  // --- ENGINE: GHOSTS ---
   const ghostExecutions = useMemo(() => {
     const ghosts: { execution: any, campaignId: number, campaignName: string, storeName: string }[] = [];
     const validStoreNames = storesList.map(s => s.name);
@@ -80,12 +75,45 @@ export function useVMData() {
     return ghosts;
   }, [allExecutions, storesList, campaignsList]);
 
-  // --- ENGINE: MATRIX CALCULATOR ---
-  const matrixData = useMemo(() => {
-    const rows: { campaign: string; store: string; w1: any; w2: any; w3: any; w4: any; totalPayout: number }[] = [];
+  // --- ENGINE: HISTORICAL SNAPSHOT CALCULATOR ---
+  const timeFilteredExecutions = useMemo(() => {
+    return allExecutions.filter(e => {
+      if (!e.submission_date) return false;
+      const d = new Date(e.submission_date);
+      return d.getFullYear().toString() === matrixYear && (d.getMonth() + 1).toString() === matrixMonth;
+    });
+  }, [allExecutions, matrixMonth, matrixYear]);
 
+  const matrixData = useMemo(() => {
+    const rows: any[] = [];
+    const isCurrentMonth = matrixYear === new Date().getFullYear().toString() && matrixMonth === (new Date().getMonth() + 1).toString();
+
+    // 1. Gather all actual (Campaign, Store) pairs from executions in this timeframe
+    const campaignStoreMap = new Map<string, Set<string>>();
+
+    timeFilteredExecutions.forEach(e => {
+      if (!e.campaign_name) return;
+      const cNames = e.campaign_name.split(',').map((s:string) => s.trim());
+      const storeName = e.store_name || e.extracted_store;
+      if (!storeName) return;
+
+      cNames.forEach((cName:string) => {
+        if (!campaignStoreMap.has(cName)) campaignStoreMap.set(cName, new Set());
+        campaignStoreMap.get(cName)!.add(storeName);
+      });
+    });
+
+    // 2. If looking at current month, ALSO include the Master Roster so 0% stores show up
+    if (isCurrentMonth) {
+      campaignsList.forEach(camp => {
+         if (!campaignStoreMap.has(camp.name)) campaignStoreMap.set(camp.name, new Set());
+         if (camp.stores) camp.stores.forEach((s:string) => campaignStoreMap.get(camp.name)!.add(s));
+      });
+    }
+
+    // 3. Generate the immutable matrix
     const getWeekStatusForCamp = (storeName: string, campName: string, weekNum: number) => {
-      const storeExecs = allExecutions.filter(e => 
+      const storeExecs = timeFilteredExecutions.filter(e => 
         (e.store_name === storeName || e.extracted_store === storeName) && 
         (e.campaign_name && e.campaign_name.includes(campName))
       );
@@ -101,18 +129,20 @@ export function useVMData() {
       if (!execForWeek) return { status: 'Missed', execution: null };
       
       let statusStr = 'Pending';
-      if (execForWeek.status === 'approved') statusStr = 'Approved';
-      if (execForWeek.status === 'rejected') statusStr = 'Rejected';
+      if (execForWeek.status === 'approved' || execForWeek.status === 'Approved') statusStr = 'Approved';
+      if (execForWeek.status === 'rejected' || execForWeek.status === 'Rejected') statusStr = 'Rejected';
       return { status: statusStr, execution: execForWeek };
     };
 
-    campaignsList.forEach(camp => {
-      if (!camp.stores) return;
-      camp.stores.forEach((storeName: string) => {
-        const w1 = getWeekStatusForCamp(storeName, camp.name, 1);
-        const w2 = getWeekStatusForCamp(storeName, camp.name, 2);
-        const w3 = getWeekStatusForCamp(storeName, camp.name, 3);
-        const w4 = getWeekStatusForCamp(storeName, camp.name, 4);
+    campaignStoreMap.forEach((storeSet, campName) => {
+      const campObj = campaignsList.find(c => c.name === campName);
+      const payout = campObj ? (campObj.payout || 0) : 0;
+      
+      storeSet.forEach(storeName => {
+        const w1 = getWeekStatusForCamp(storeName, campName, 1);
+        const w2 = getWeekStatusForCamp(storeName, campName, 2);
+        const w3 = getWeekStatusForCamp(storeName, campName, 3);
+        const w4 = getWeekStatusForCamp(storeName, campName, 4);
 
         let approvedCount = 0;
         const weeks = [w1, w2, w3, w4];
@@ -121,7 +151,7 @@ export function useVMData() {
           const weekNum = index + 1;
           if (weekObj.status === 'Approved') {
             let depsSatisfied = true;
-            const deps = camp.dependencies || [];
+            const deps = campObj ? (campObj.dependencies || []) : [];
             deps.forEach((depCampName: string) => {
               if (getWeekStatusForCamp(storeName, depCampName, weekNum).status !== 'Approved') depsSatisfied = false;
             });
@@ -130,21 +160,24 @@ export function useVMData() {
         });
 
         rows.push({
-          campaign: camp.name,
-          store: storeName,
+          campaign: campName, store: storeName,
           w1, w2, w3, w4,
-          totalPayout: approvedCount * (camp.payout || 0)
+          totalPayout: approvedCount * payout
         });
       });
     });
 
     return rows;
-  }, [campaignsList, allExecutions]);
+  }, [campaignsList, timeFilteredExecutions, matrixMonth, matrixYear]);
 
+  // --- ENGINE: DYNAMIC SUMMARY ---
   const generalMatrixData = useMemo(() => {
-    return campaignsList.map(camp => {
-      const campRows = matrixData.filter(r => r.campaign === camp.name);
-      const enrolledCount = camp.stores?.length || 0;
+    // Dynamically build based on what's ACTUALLY in the matrixData (historical reality)
+    const activeCampaigns = Array.from(new Set(matrixData.map(r => r.campaign)));
+    
+    return activeCampaigns.map(campName => {
+      const campRows = matrixData.filter(r => r.campaign === campName);
+      const enrolledCount = campRows.length; // Actual number of stores involved
 
       const calcWeek = (weekKey: 'w1'|'w2'|'w3'|'w4') => {
         if (enrolledCount === 0) return { sub: 0, app: 0, rej: 0 };
@@ -159,52 +192,12 @@ export function useVMData() {
       };
 
       return {
-        id: camp.id, campaign: camp.name, enrolled: enrolledCount,
+        id: campName, campaign: campName, enrolled: enrolledCount,
         w1: calcWeek('w1'), w2: calcWeek('w2'), w3: calcWeek('w3'), w4: calcWeek('w4'),
         totalLiability: campRows.reduce((sum, r) => sum + r.totalPayout, 0)
       };
     });
-  }, [campaignsList, matrixData]);
-
-  // --- ENGINE: LEADERBOARD CALCULATOR ---
-  const leaderboardData = useMemo(() => {
-    const calculateScore = (pId: string, roleType: 'asm' | 'staff') => {
-      // Find all stores assigned to this person
-      const assignedStores = storesList.filter(s => 
-        roleType === 'asm' ? s.asm_id === pId : s.field_staff_id === pId
-      ).map(s => s.name);
-
-      if (assignedStores.length === 0) return null;
-
-      // Get all matrix rows for these stores
-      const rows = matrixData.filter(r => assignedStores.includes(r.store));
-      if (rows.length === 0) return { submissionRate: 0, approvalRate: 0, totalStores: assignedStores.length };
-
-      let totalSlots = rows.length * 4; // 4 weeks per store/campaign
-      let totalSubmitted = 0;
-      let totalApproved = 0;
-
-      rows.forEach(r => {
-        [r.w1, r.w2, r.w3, r.w4].forEach(w => {
-          if (w.status !== 'Missed') totalSubmitted++;
-          if (w.status === 'Approved') totalApproved++;
-        });
-      });
-
-      return {
-        submissionRate: Math.round((totalSubmitted / totalSlots) * 100),
-        approvalRate: totalSubmitted > 0 ? Math.round((totalApproved / totalSubmitted) * 100) : 0,
-        totalStores: assignedStores.length
-      };
-    };
-
-    return personnelList.map(person => ({
-      ...person,
-      stats: calculateScore(person.id, person.role === 'ASM' ? 'asm' : 'staff')
-    })).filter(p => p.stats !== null); // Only show people with assigned stores
-  }, [personnelList, storesList, matrixData]);
-
-  
+  }, [matrixData]);
 
   return {
     pendingExecutions, setPendingExecutions,
@@ -212,13 +205,13 @@ export function useVMData() {
     storesList, setStoresList,
     campaignsList, setCampaignsList,
     reasonsList, setReasonsList,
-    isLoading, setIsLoading,
     personnelList, setPersonnelList,
-    fetchData,
-    orphanExecutions,
-    ghostExecutions,
-    matrixData,
-    generalMatrixData,
-    leaderboardData
+    isLoading, setIsLoading, fetchData,
+    orphanExecutions, ghostExecutions,
+    matrixData, generalMatrixData,
+    
+    // EXPORT TIME STATE
+    matrixYear, setMatrixYear: updateYear,
+    matrixMonth, setMatrixMonth: updateMonth
   };
 }

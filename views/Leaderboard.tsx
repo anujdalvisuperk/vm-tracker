@@ -1,15 +1,55 @@
 'use client';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 
-// Notice we added campaignsList here
 export default function Leaderboard({ personnelList, storesList, matrixData, campaignsList }: any) {
   const [roleFilter, setRoleFilter] = useState<'ASM' | 'SAE_PROMOTER'>('SAE_PROMOTER');
   const [metricFilter, setMetricFilter] = useState<'submission' | 'approval'>('submission');
-  const [weekFilter, setWeekFilter] = useState<'All' | 'w1' | 'w2' | 'w3' | 'w4'>('All');
-  const [campaignFilter, setCampaignFilter] = useState<string>('All'); // 👈 New State
   
-  // State for the Drill-Down Modal
-  const [selectedPerson, setSelectedPerson] = useState<any | null>(null);
+  // Time and Campaign Filters
+  const [weekFilter, setWeekFilter] = useState<'All' | 'w1' | 'w2' | 'w3' | 'w4'>('All');
+  const [selectedCampaigns, setSelectedCampaigns] = useState<string[]>(['All']);
+  const [isCampMenuOpen, setIsCampMenuOpen] = useState(false);
+
+  // --- 💾 LOAD DEFAULTS ON MOUNT ---
+  useEffect(() => {
+    const savedWeek = localStorage.getItem('vm_default_week');
+    if (savedWeek) setWeekFilter(savedWeek as any);
+
+    const savedCamps = localStorage.getItem('vm_default_campaigns');
+    if (savedCamps) {
+      try {
+        setSelectedCampaigns(JSON.parse(savedCamps));
+      } catch (e) {
+        console.error("Failed to parse saved campaigns");
+      }
+    }
+  }, []);
+
+  // --- 💾 SAVE DEFAULTS ON CHANGE ---
+  const handleWeekChange = (val: string) => {
+    setWeekFilter(val as any);
+    localStorage.setItem('vm_default_week', val);
+  };
+
+  const toggleCampaign = (campName: string) => {
+    let newSelection = [...selectedCampaigns];
+    
+    if (campName === 'All') {
+      newSelection = ['All'];
+    } else {
+      newSelection = newSelection.filter((c: string) => c !== 'All'); // Remove 'All' if a specific one is clicked
+      if (newSelection.includes(campName)) {
+        newSelection = newSelection.filter((c: string) => c !== campName);
+      } else {
+        newSelection.push(campName);
+      }
+      if (newSelection.length === 0) newSelection = ['All']; // Fallback if they uncheck everything
+    }
+    
+    setSelectedCampaigns(newSelection);
+    localStorage.setItem('vm_default_campaigns', JSON.stringify(newSelection));
+  };
+
 
   // --- DYNAMIC CALCULATOR ENGINE ---
   const leaderboardData = useMemo(() => {
@@ -23,10 +63,10 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
 
       if (assignedStores.length === 0) return null;
 
-      // 2. Get matrix rows for these stores AND the selected campaign
+      // 2. Get matrix rows for these stores AND the selected campaigns
       const rows = matrixData.filter((r: any) => {
         const matchesStore = assignedStores.includes(r.store);
-        const matchesCampaign = campaignFilter === 'All' ? true : r.campaign === campaignFilter;
+        const matchesCampaign = selectedCampaigns.includes('All') || selectedCampaigns.includes(r.campaign);
         return matchesStore && matchesCampaign;
       });
       
@@ -68,7 +108,7 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
       ...person,
       stats: calculateScore(person.id, person.role === 'ASM' ? 'asm' : 'staff')
     })).filter((p: any) => p.stats !== null);
-  }, [personnelList, storesList, matrixData, weekFilter, campaignFilter]); // 👈 Added dependency
+  }, [personnelList, storesList, matrixData, weekFilter, selectedCampaigns]); 
 
 
   // --- SORTING & FILTERING ---
@@ -85,7 +125,9 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
   }, [leaderboardData, roleFilter, metricFilter]);
 
 
-  // --- HELPER FOR RENDERING STATUS BADGES IN MODAL ---
+  // State for the Drill-Down Modal
+  const [selectedPerson, setSelectedPerson] = useState<any | null>(null);
+
   const renderStatus = (status: string) => {
     if (!status || status === 'Missed') return <span className="text-slate-400 font-bold">Missed</span>;
     if (status === 'Approved') return <span className="text-green-600 font-black">Approved</span>;
@@ -103,21 +145,45 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
           <p className="text-slate-500 mt-2 font-medium text-lg">Real-time performance ranking of the field team.</p>
         </div>
         
-        <div className="flex flex-wrap gap-3">
-          {/* 👈 NEW: Campaign Filter Dropdown */}
-          <div className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm flex items-center pr-3">
-             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-3 mr-2">Campaign:</span>
-             <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className="border-none bg-slate-50 text-slate-700 text-sm font-bold rounded-xl px-3 py-2 outline-none cursor-pointer hover:bg-slate-100 transition-colors w-32 truncate">
-                <option value="All">All</option>
-                {campaignsList?.map((c: any) => (
-                  <option key={c.id} value={c.name}>{c.name}</option>
-                ))}
-             </select>
+        <div className="flex flex-wrap gap-3 relative">
+          
+          {/* CUSTOM MULTI-SELECT FOR CAMPAIGNS */}
+          <div className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm flex items-center pr-1.5 z-20">
+             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-3 mr-2">Campaigns:</span>
+             <div className="relative">
+               <button 
+                 onClick={() => setIsCampMenuOpen(!isCampMenuOpen)}
+                 className="bg-slate-50 border-2 border-slate-100 text-slate-700 text-sm font-bold rounded-xl px-4 py-2 hover:bg-slate-100 transition-colors flex items-center gap-2 min-w-[140px] justify-between"
+               >
+                 <span>{selectedCampaigns.includes('All') ? 'All Campaigns' : `${selectedCampaigns.length} Selected`}</span>
+                 <span className="text-[10px] text-slate-400">▼</span>
+               </button>
+
+               {/* Dropdown Menu */}
+               {isCampMenuOpen && (
+                 <>
+                   <div className="fixed inset-0 z-40" onClick={() => setIsCampMenuOpen(false)}></div>
+                   <div className="absolute top-full mt-2 left-0 w-64 bg-white rounded-2xl shadow-2xl border border-slate-100 p-2 z-50 max-h-72 overflow-y-auto animate-in fade-in slide-in-from-top-2">
+                     <label className="flex items-center gap-3 p-3 hover:bg-slate-50 rounded-xl cursor-pointer transition-colors">
+                        <input type="checkbox" checked={selectedCampaigns.includes('All')} onChange={() => toggleCampaign('All')} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                        <span className="text-sm font-black text-slate-800">Select All Campaigns</span>
+                     </label>
+                     <div className="my-1 border-t border-slate-100"></div>
+                     {campaignsList?.map((c: any) => (
+                        <label key={c.id} className="flex items-center gap-3 p-3 hover:bg-slate-50 rounded-xl cursor-pointer transition-colors">
+                          <input type="checkbox" checked={selectedCampaigns.includes(c.name)} onChange={() => toggleCampaign(c.name)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                          <span className="text-sm font-medium text-slate-600">{c.name}</span>
+                        </label>
+                     ))}
+                   </div>
+                 </>
+               )}
+             </div>
           </div>
 
           <div className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm flex items-center pr-3">
              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-3 mr-2">Time:</span>
-             <select value={weekFilter} onChange={(e) => setWeekFilter(e.target.value as any)} className="border-none bg-slate-50 text-slate-700 text-sm font-bold rounded-xl px-3 py-2 outline-none cursor-pointer hover:bg-slate-100 transition-colors">
+             <select value={weekFilter} onChange={(e) => handleWeekChange(e.target.value)} className="border-none bg-slate-50 border-2 border-slate-100 text-slate-700 text-sm font-bold rounded-xl px-3 py-2 outline-none cursor-pointer hover:bg-slate-100 transition-colors">
                 <option value="All">Full Month</option>
                 <option value="w1">Week 1 (1st - 7th)</option>
                 <option value="w2">Week 2 (8th - 14th)</option>
@@ -140,7 +206,7 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
 
       {/* --- MAIN TABLE --- */}
       {filteredList.length > 0 ? (
-        <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 overflow-hidden">
+        <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 overflow-hidden relative z-10">
           <table className="w-full text-left">
             <thead className="bg-slate-50">
               <tr className="text-[10px] text-slate-400 uppercase tracking-widest border-b border-slate-100">
@@ -196,18 +262,16 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-100">
             
-            {/* Modal Header */}
             <div className="p-8 border-b border-slate-100 flex justify-between items-start bg-slate-50/50">
               <div>
                 <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">{selectedPerson.role} Performance</p>
                 <h3 className="font-black text-3xl text-slate-900">{selectedPerson.name}</h3>
-                {campaignFilter !== 'All' && <p className="text-sm font-bold text-blue-600 mt-1">Filtered by: {campaignFilter}</p>}
+                {!selectedCampaigns.includes('All') && <p className="text-sm font-bold text-blue-600 mt-1">Filtered by: {selectedCampaigns.length} Campaign(s)</p>}
               </div>
               <button onClick={() => setSelectedPerson(null)} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-all font-bold">✕</button>
             </div>
 
             <div className="overflow-y-auto">
-               {/* Metrics Grid */}
                <div className="p-8 bg-white border-b border-slate-100">
                  <h4 className="text-sm font-black text-slate-800 mb-4 uppercase tracking-widest">Aggregate Metrics ({weekFilter === 'All' ? 'Full Month' : weekFilter.toUpperCase()})</h4>
                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -219,7 +283,6 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
                  </div>
                </div>
 
-               {/* Store Breakdown Table */}
                <div className="p-8 bg-slate-50/30">
                  <h4 className="text-sm font-black text-slate-800 mb-4 uppercase tracking-widest">Execution Breakdown</h4>
                  <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">

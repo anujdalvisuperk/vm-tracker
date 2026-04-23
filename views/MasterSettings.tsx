@@ -57,15 +57,31 @@ export default function MasterSettings({ storesList, campaignsList, reasonsList,
     const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = async (event) => {
-      const lines = (event.target?.result as string).split('\n').filter(l => l.trim());
-      // Skip header row
+      // 1. Split lines and clean up any Windows carriage returns (\r)
+      const lines = (event.target?.result as string).replace(/\r/g, '').split('\n').filter(l => l.trim());
+      
+      // 2. Map the data, enforcing the EXACT case expected by the database
       const newPersonnel = lines.slice(1).map(line => {
-        const [name, role] = line.split(',').map(s => s.trim());
-        return { name, role: role.toUpperCase() };
+        const [name, rawRole] = line.split(',').map(s => s.trim());
+        
+        let formattedRole = 'SAE'; // Default fallback
+        if (rawRole.toUpperCase() === 'ASM') formattedRole = 'ASM';
+        else if (rawRole.toUpperCase() === 'SAE') formattedRole = 'SAE';
+        else if (rawRole.toUpperCase() === 'PROMOTER') formattedRole = 'Promoter'; // EXACT match for DB
+        
+        return { name, role: formattedRole };
       });
-      await supabase.from('personnel').upsert(newPersonnel, { onConflict: 'name' });
-      fetchData();
-      alert("Personnel uploaded successfully!");
+
+      // 3. Send to Supabase and actually check for errors!
+      const { error } = await supabase.from('personnel').upsert(newPersonnel, { onConflict: 'name' });
+      
+      if (error) {
+        alert(`Database Error: ${error.message}`);
+        console.error(error);
+      } else {
+        await fetchData();
+        alert(`Successfully uploaded ${newPersonnel.length} personnel!`);
+      }
     };
     reader.readAsText(file);
     if(personnelFileInputRef.current) personnelFileInputRef.current.value = '';

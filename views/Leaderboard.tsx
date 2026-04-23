@@ -2,7 +2,8 @@
 import { useState, useMemo, useEffect } from 'react';
 
 export default function Leaderboard({ personnelList, storesList, matrixData, campaignsList }: any) {
-  const [roleFilter, setRoleFilter] = useState<'ASM' | 'SAE_PROMOTER'>('SAE_PROMOTER');
+  // 👈 NEW: Split roles into 3 distinct options
+  const [roleFilter, setRoleFilter] = useState<'ASM' | 'SAE' | 'Promoter'>('SAE'); 
   const [metricFilter, setMetricFilter] = useState<'submission' | 'approval'>('submission');
   
   // Time and Campaign Filters
@@ -37,13 +38,13 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
     if (campName === 'All') {
       newSelection = ['All'];
     } else {
-      newSelection = newSelection.filter((c: string) => c !== 'All'); // Remove 'All' if a specific one is clicked
+      newSelection = newSelection.filter((c: string) => c !== 'All');
       if (newSelection.includes(campName)) {
         newSelection = newSelection.filter((c: string) => c !== campName);
       } else {
         newSelection.push(campName);
       }
-      if (newSelection.length === 0) newSelection = ['All']; // Fallback if they uncheck everything
+      if (newSelection.length === 0) newSelection = ['All'];
     }
     
     setSelectedCampaigns(newSelection);
@@ -113,9 +114,8 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
 
   // --- SORTING & FILTERING ---
   const filteredList = useMemo(() => {
-    const list = leaderboardData.filter((p: any) => 
-      roleFilter === 'ASM' ? p.role === 'ASM' : (p.role === 'SAE' || p.role === 'Promoter')
-    );
+    // 👈 NEW: Strictly filter by the exact selected role (ASM, SAE, or Promoter)
+    const list = leaderboardData.filter((p: any) => p.role === roleFilter);
     
     return [...list].sort((a: any, b: any) => {
       const valA = metricFilter === 'submission' ? a.stats.submissionRate : a.stats.approvalRate;
@@ -139,7 +139,7 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
     <div className="max-w-6xl mx-auto animate-in fade-in duration-500 pb-20">
       
       {/* --- HEADER & FILTERS --- */}
-      <div className="flex flex-col md:flex-row justify-between items-end mb-12 gap-6">
+      <div className="flex flex-col xl:flex-row justify-between items-end mb-12 gap-6">
         <div>
           <h2 className="text-4xl font-black text-slate-900 tracking-tight">Field Leaderboard</h2>
           <p className="text-slate-500 mt-2 font-medium text-lg">Real-time performance ranking of the field team.</p>
@@ -147,7 +147,6 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
         
         <div className="flex flex-wrap gap-3 relative">
           
-          {/* CUSTOM MULTI-SELECT FOR CAMPAIGNS */}
           <div className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm flex items-center pr-1.5 z-20">
              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-3 mr-2">Campaigns:</span>
              <div className="relative">
@@ -159,7 +158,6 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
                  <span className="text-[10px] text-slate-400">▼</span>
                </button>
 
-               {/* Dropdown Menu */}
                {isCampMenuOpen && (
                  <>
                    <div className="fixed inset-0 z-40" onClick={() => setIsCampMenuOpen(false)}></div>
@@ -192,14 +190,16 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
              </select>
           </div>
 
+          {/* 👈 NEW: Three distinct buttons for SAEs, Promoters, and ASMs */}
           <div className="flex bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm">
-            <button onClick={() => setRoleFilter('SAE_PROMOTER')} className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${roleFilter === 'SAE_PROMOTER' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>SAE / Promoters</button>
-            <button onClick={() => setRoleFilter('ASM')} className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${roleFilter === 'ASM' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>ASMs</button>
+            <button onClick={() => setRoleFilter('SAE')} className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${roleFilter === 'SAE' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>SAEs</button>
+            <button onClick={() => setRoleFilter('Promoter')} className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${roleFilter === 'Promoter' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>Promoters</button>
+            <button onClick={() => setRoleFilter('ASM')} className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${roleFilter === 'ASM' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>ASMs</button>
           </div>
           
           <div className="flex bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm">
-            <button onClick={() => setMetricFilter('submission')} className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${metricFilter === 'submission' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>By Submission</button>
-            <button onClick={() => setMetricFilter('approval')} className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${metricFilter === 'approval' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>By Approval</button>
+            <button onClick={() => setMetricFilter('submission')} className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${metricFilter === 'submission' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>By Submission</button>
+            <button onClick={() => setMetricFilter('approval')} className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${metricFilter === 'approval' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>By Approval</button>
           </div>
         </div>
       </div>
@@ -253,7 +253,7 @@ export default function Leaderboard({ personnelList, storesList, matrixData, cam
         <div className="bg-white p-16 rounded-[2rem] border border-slate-100 shadow-sm text-center">
           <div className="text-4xl mb-4">🤷‍♂️</div>
           <h3 className="text-2xl font-black text-slate-800 mb-2">No Data Found</h3>
-          <p className="text-slate-500 font-medium">Map your team in Settings or adjust the Time/Campaign filter.</p>
+          <p className="text-slate-500 font-medium">No {roleFilter}s match your current mappings or filters.</p>
         </div>
       )}
 

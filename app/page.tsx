@@ -505,6 +505,7 @@ export default function VMDashboard() {
              personnelList={personnelList} 
              storesList={storesList} 
              matrixData={matrixData} 
+             campaignsList={campaignsList}
           />
         )}
 

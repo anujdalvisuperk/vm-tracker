@@ -1,10 +1,12 @@
 'use client';
 import { useState, useMemo } from 'react';
 
-export default function Leaderboard({ personnelList, storesList, matrixData }: any) {
+// Notice we added campaignsList here
+export default function Leaderboard({ personnelList, storesList, matrixData, campaignsList }: any) {
   const [roleFilter, setRoleFilter] = useState<'ASM' | 'SAE_PROMOTER'>('SAE_PROMOTER');
   const [metricFilter, setMetricFilter] = useState<'submission' | 'approval'>('submission');
   const [weekFilter, setWeekFilter] = useState<'All' | 'w1' | 'w2' | 'w3' | 'w4'>('All');
+  const [campaignFilter, setCampaignFilter] = useState<string>('All'); // 👈 New State
   
   // State for the Drill-Down Modal
   const [selectedPerson, setSelectedPerson] = useState<any | null>(null);
@@ -21,13 +23,22 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
 
       if (assignedStores.length === 0) return null;
 
-      // 2. Get matrix rows for these stores
-      const rows = matrixData.filter((r: any) => assignedStores.includes(r.store));
+      // 2. Get matrix rows for these stores AND the selected campaign
+      const rows = matrixData.filter((r: any) => {
+        const matchesStore = assignedStores.includes(r.store);
+        const matchesCampaign = campaignFilter === 'All' ? true : r.campaign === campaignFilter;
+        return matchesStore && matchesCampaign;
+      });
       
       let expected = 0;
       let submitted = 0;
       let approved = 0;
       let rejected = 0;
+
+      if (rows.length === 0) return { 
+        submissionRate: 0, approvalRate: 0, totalStores: assignedStores.length, 
+        details: { expected, submitted, approved, rejected, missed: 0, rows: [] } 
+      };
 
       // 3. Calculate detailed stats
       rows.forEach((r: any) => {
@@ -57,7 +68,7 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
       ...person,
       stats: calculateScore(person.id, person.role === 'ASM' ? 'asm' : 'staff')
     })).filter((p: any) => p.stats !== null);
-  }, [personnelList, storesList, matrixData, weekFilter]);
+  }, [personnelList, storesList, matrixData, weekFilter, campaignFilter]); // 👈 Added dependency
 
 
   // --- SORTING & FILTERING ---
@@ -93,6 +104,17 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
         </div>
         
         <div className="flex flex-wrap gap-3">
+          {/* 👈 NEW: Campaign Filter Dropdown */}
+          <div className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm flex items-center pr-3">
+             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-3 mr-2">Campaign:</span>
+             <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} className="border-none bg-slate-50 text-slate-700 text-sm font-bold rounded-xl px-3 py-2 outline-none cursor-pointer hover:bg-slate-100 transition-colors w-32 truncate">
+                <option value="All">All</option>
+                {campaignsList?.map((c: any) => (
+                  <option key={c.id} value={c.name}>{c.name}</option>
+                ))}
+             </select>
+          </div>
+
           <div className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm flex items-center pr-3">
              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-3 mr-2">Time:</span>
              <select value={weekFilter} onChange={(e) => setWeekFilter(e.target.value as any)} className="border-none bg-slate-50 text-slate-700 text-sm font-bold rounded-xl px-3 py-2 outline-none cursor-pointer hover:bg-slate-100 transition-colors">
@@ -133,7 +155,6 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
             <tbody className="divide-y divide-slate-50">
               {filteredList.map((person: any, i: number) => {
                 const score = metricFilter === 'submission' ? person.stats.submissionRate : person.stats.approvalRate;
-                const isTop3 = i < 3;
                 
                 return (
                   <tr key={person.id} className="hover:bg-slate-50/80 transition-colors group">
@@ -166,7 +187,7 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
         <div className="bg-white p-16 rounded-[2rem] border border-slate-100 shadow-sm text-center">
           <div className="text-4xl mb-4">🤷‍♂️</div>
           <h3 className="text-2xl font-black text-slate-800 mb-2">No Data Found</h3>
-          <p className="text-slate-500 font-medium">Map your team in Settings or adjust the Time filter.</p>
+          <p className="text-slate-500 font-medium">Map your team in Settings or adjust the Time/Campaign filter.</p>
         </div>
       )}
 
@@ -180,6 +201,7 @@ export default function Leaderboard({ personnelList, storesList, matrixData }: a
               <div>
                 <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">{selectedPerson.role} Performance</p>
                 <h3 className="font-black text-3xl text-slate-900">{selectedPerson.name}</h3>
+                {campaignFilter !== 'All' && <p className="text-sm font-bold text-blue-600 mt-1">Filtered by: {campaignFilter}</p>}
               </div>
               <button onClick={() => setSelectedPerson(null)} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 transition-all font-bold">✕</button>
             </div>

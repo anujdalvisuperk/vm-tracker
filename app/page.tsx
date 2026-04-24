@@ -114,6 +114,13 @@ export default function VMDashboard() {
   const [modalRejectReason, setModalRejectReason] = useState('');
   const [modalCustomRejectReason, setModalCustomRejectReason] = useState('');
 
+  const closeGlobalViewer = () => {
+    setSelectedPhoto(null);
+    setModalActionState('idle');
+    setModalRejectReason('');
+    setModalCustomRejectReason('');
+  };
+
   // 🧠 THE BRAIN (from Hook)
   const {
     pendingExecutions, allExecutions, storesList, campaignsList, reasonsList, personnelList,

@@ -490,7 +490,7 @@ export default function VMDashboard() {
 
             {mainView === 'orphans' && (
               <div className="max-w-5xl mx-auto animate-in fade-in">
-                <div className="mb-10"><h2 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight mb-2">Data Recovery</h2><p className="text-slate-500 font-medium">Fix stores that don't match or aren't enrolled.</p></div>
+                <div className="mb-10"><h2 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight mb-2">Data Recovery</h2><p className="text-slate-500 font-medium">Fix stores that don&apos;t match or aren&apos;t enrolled.</p></div>
                 {ghostExecutions.length > 0 && (
                   <div className="mb-10 animate-in fade-in slide-in-from-top-4">
                     <div className="bg-blue-50 border border-blue-200 rounded-t-2xl p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">

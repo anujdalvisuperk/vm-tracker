@@ -16,7 +16,7 @@ export default function AnalyticsMatrix({ campaignsList, generalMatrixData, matr
   }, []);
 
   const handleYearChange = (val: string) => { setMatrixYear(val); localStorage.setItem('vm_matrix_default_year', val); };
-  const handleMonthChange = (val: string) => { setMonthMonth(val); localStorage.setItem('vm_matrix_default_month', val); };
+  const handleMonthChange = (val: string) => { setMatrixMonth(val); localStorage.setItem('vm_matrix_default_month', val); };
 
   const toggleCampaign = (campName: string) => {
     let newSelection = [...selectedCampaigns];

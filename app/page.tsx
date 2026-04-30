@@ -247,7 +247,7 @@ export default function VMDashboard() {
     setIsLoading(true);
     const { error } = await supabase
       .from('executions')
-      .update({ status: 'Approved', rejection_reason: null }) // If this still fails, we may need to change 'Approved' to 'approved'
+      .update({ status: 'approved', rejection_reason: null }) // If this still fails, we may need to change 'Approved' to 'approved'
       .eq('id', selectedPhoto.id);
 
     if (error) {
@@ -273,7 +273,7 @@ export default function VMDashboard() {
     
     const { error } = await supabase
       .from('executions')
-      .update({ status: 'Rejected', rejection_reason: finalReason })
+      .update({ status: 'rejected', rejection_reason: finalReason })
       .eq('id', selectedPhoto.id);
 
     if (error) {

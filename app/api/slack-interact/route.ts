@@ -13,8 +13,11 @@ export async function POST(req: Request) {
 
   const payload = JSON.parse(payloadString);
 
-  // 1. Catch the Button Click
-  if (payload.type === 'block_actions' && payload.actions[0].action_id === 'open_vm_submission_modal') {
+  // 1. Catch the Button Click Safely
+  if (
+    payload.type === 'block_actions' && 
+    payload.actions?.[0]?.action_id === 'open_vm_submission_modal'
+  ) {
     const triggerId = payload.trigger_id;
 
     // 2. Fire back the Modal UI

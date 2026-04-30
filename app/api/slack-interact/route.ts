@@ -20,9 +20,10 @@ export async function POST(req: Request) {
     // 2. Fire back the Modal UI
     await fetch('https://slack.com/api/views.open', {
       method: 'POST',
+      
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer xoxb-975376712565-10505994485090-HfiiHy4pKM5X7rFunLcdfbuD` // <--- PASTE YOUR TOKEN HERE
+        'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}` 
       },
       body: JSON.stringify({
         trigger_id: triggerId,

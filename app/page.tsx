@@ -239,19 +239,51 @@ export default function VMDashboard() {
   };
 
   const handleModalApprove = async () => {
-    if (!selectedPhoto) return;
+    if (!selectedPhoto || !selectedPhoto.id) {
+      alert("🚨 Error: Photo ID is missing! The UI couldn't find the ID for this image.");
+      return;
+    }
+    
     setIsLoading(true);
-    const { error } = await supabase.from('executions').update({ status: 'Approved', rejection_reason: null }).eq('id', selectedPhoto.id);
-    if (!error) { setSelectedPhoto({ ...selectedPhoto, status: 'Approved', rejection_reason: undefined }); setModalActionState('idle'); fetchData(); }
+    const { error } = await supabase
+      .from('executions')
+      .update({ status: 'Approved', rejection_reason: null }) // If this still fails, we may need to change 'Approved' to 'approved'
+      .eq('id', selectedPhoto.id);
+
+    if (error) {
+      console.error("Supabase Error:", error);
+      alert(`Database Error: ${error.message}`); // This will tell us EXACTLY what is wrong!
+    } else {
+      setSelectedPhoto({ ...selectedPhoto, status: 'Approved', rejection_reason: undefined }); 
+      setModalActionState('idle'); 
+      fetchData(); 
+    }
     setIsLoading(false);
   };
 
   const handleModalReject = async () => {
-    if (!selectedPhoto || !modalRejectReason) return alert("Select reason");
+    if (!selectedPhoto || !selectedPhoto.id) {
+      alert("🚨 Error: Photo ID is missing! The UI couldn't find the ID for this image.");
+      return;
+    }
+    if (!modalRejectReason) return alert("Please select a reason first.");
+    
     setIsLoading(true);
     const finalReason = modalRejectReason === 'Other (Type custom reason)' ? modalCustomRejectReason : modalRejectReason;
-    const { error } = await supabase.from('executions').update({ status: 'Rejected', rejection_reason: finalReason }).eq('id', selectedPhoto.id);
-    if (!error) { setSelectedPhoto({ ...selectedPhoto, status: 'Rejected', rejection_reason: finalReason }); setModalActionState('idle'); fetchData(); }
+    
+    const { error } = await supabase
+      .from('executions')
+      .update({ status: 'Rejected', rejection_reason: finalReason })
+      .eq('id', selectedPhoto.id);
+
+    if (error) {
+      console.error("Supabase Error:", error);
+      alert(`Database Error: ${error.message}`);
+    } else {
+      setSelectedPhoto({ ...selectedPhoto, status: 'Rejected', rejection_reason: finalReason }); 
+      setModalActionState('idle'); 
+      fetchData(); 
+    }
     setIsLoading(false);
   };
 

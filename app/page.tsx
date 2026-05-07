@@ -61,7 +61,7 @@ const OrphanCard = ({ execution, storesList, campaignsList, onResolve, onDelete 
                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2">Assign Campaign</label>
                <select value={selectedCamp} onChange={(e) => setSelectedCamp(e.target.value)} className="w-full border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 focus:ring-4 focus:ring-blue-50 outline-none transition-all bg-white">
                  <option value="" disabled>-- Select --</option>
-                 {campaignsList.map((c: any) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                 {activeCampaignsList.map((c: any) => <option key={c.id} value={c.name}>{c.name}</option>)}
                </select>
              </div>
           </div>
@@ -128,6 +128,24 @@ export default function VMDashboard() {
     matrixData, generalMatrixData,
     matrixYear, setMatrixYear, matrixMonth, setMatrixMonth // 👈 NEW
   } = useVMData();
+
+  // 🟢 NEW: Filter out expired campaigns based on end_date
+  const activeCampaignsList = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset time to midnight for a fair comparison
+
+    return campaignsList.filter((camp: any) => {
+      if (!camp.end_date) return true; // If no end date is set, keep it active
+      const endDate = new Date(camp.end_date);
+      return endDate >= today;
+    });
+  }, [campaignsList]);
+
+  // 🟢 NEW: Filter the Matrix data so expired campaigns don't show up as tabs
+  const activeGeneralMatrixData = useMemo(() => {
+    const activeNames = activeCampaignsList.map((c: any) => c.name);
+    return generalMatrixData.filter((row: any) => activeNames.includes(row.campaign));
+  }, [generalMatrixData, activeCampaignsList]);
 
   // --- DERIVED DATA ---
   const missingExecutions = useMemo(() => {
@@ -433,8 +451,8 @@ export default function VMDashboard() {
         {/* PUBLIC VIEW: DASHBOARD */}
         {mainView === 'dashboard' && (
           <AnalyticsMatrix 
-            campaignsList={campaignsList} 
-            generalMatrixData={generalMatrixData} 
+            campaignsList={activeCampaignsList} 
+            generalMatrixData={activeGeneralMatrixData} 
             matrixData={matrixData} 
             matrixYear={matrixYear} setMatrixYear={setMatrixYear} // 👈 NEW
             matrixMonth={matrixMonth} setMatrixMonth={setMatrixMonth}
@@ -453,8 +471,8 @@ export default function VMDashboard() {
              personnelList={personnelList} 
              storesList={storesList} 
              matrixData={matrixData} 
-             campaignsList={campaignsList}
-             generalMatrixData={generalMatrixData} // 👈 Pass this to get dynamic campaigns
+             campaignsList={activeCampaignsList}
+             generalMatrixData={activeGeneralMatrixData} // 👈 Pass this to get dynamic campaigns
              matrixYear={matrixYear} setMatrixYear={setMatrixYear} // 👈 NEW
              matrixMonth={matrixMonth} setMatrixMonth={setMatrixMonth}
           />
@@ -559,7 +577,7 @@ export default function VMDashboard() {
                 {orphanExecutions.length === 0 && ghostExecutions.length === 0 ? (
                   <div className="bg-white rounded-3xl p-16 text-center shadow-xl shadow-slate-200/40 border border-slate-100"><div className="text-5xl mb-4">✨</div><h3 className="text-2xl font-black text-slate-900">Database is Pristine</h3></div>
                 ) : (
-                  <div className="space-y-6">{paginatedOrphans.map((exec:any) => <OrphanCard key={exec.id} execution={exec} storesList={storesList} campaignsList={campaignsList} onResolve={handleOrphanResolve} onDelete={async (id:string)=>{ if(confirm("Delete?")){ await supabase.from('executions').delete().eq('id', id); fetchData(); } }} />)}<Pagination total={orphanExecutions.length} page={orphansPage} setPage={setOrphansPage} /></div>
+                  <div className="space-y-6">{paginatedOrphans.map((exec:any) => <OrphanCard key={exec.id} execution={exec} storesList={storesList} campaignsList={activeCampaignsList} onResolve={handleOrphanResolve} onDelete={async (id:string)=>{ if(confirm("Delete?")){ await supabase.from('executions').delete().eq('id', id); fetchData(); } }} />)}<Pagination total={orphanExecutions.length} page={orphansPage} setPage={setOrphansPage} /></div>
                 )}
               </div>
             )}
@@ -568,7 +586,7 @@ export default function VMDashboard() {
               <div className="max-w-6xl mx-auto animate-in fade-in">
                 <h2 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight mb-8">Missing Photos</h2>
                 <div className="mb-8 bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row gap-4">
-                  <select value={missingCampaignFilter} onChange={e => setMissingCampaignFilter(e.target.value)} className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 outline-none bg-white"><option value="all">All Campaigns</option>{campaignsList.map((c:any) => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
+                  <select value={missingCampaignFilter} onChange={e => setMissingCampaignFilter(e.target.value)} className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 outline-none bg-white"><option value="all">All Campaigns</option>{activeCampaignsList.map((c:any) => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
                   <input type="date" value={missingStartDate} onChange={e => setMissingStartDate(e.target.value)} className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 outline-none" />
                   <input type="date" value={missingEndDate} onChange={e => setMissingEndDate(e.target.value)} className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 outline-none" />
                 </div>
@@ -595,7 +613,7 @@ export default function VMDashboard() {
                   <div className="flex flex-col md:flex-row gap-4">
                     <input type="text" placeholder="Search caption or store..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 outline-none" />
                     <select value={storeFilter} onChange={e => setStoreFilter(e.target.value)} className="w-full md:w-64 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 outline-none bg-white"><option value="all">All Stores</option>{storesList.map((s:any) => <option key={s.id} value={s.name}>{s.name}</option>)}</select>
-                    <select value={campaignFilter} onChange={e => setCampaignFilter(e.target.value)} className="w-full md:w-64 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 outline-none bg-white"><option value="all">All Campaigns</option>{campaignsList.map((c:any) => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
+                    <select value={campaignFilter} onChange={e => setCampaignFilter(e.target.value)} className="w-full md:w-64 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 outline-none bg-white"><option value="all">All Campaigns</option>{activeCampaignsList.map((c:any) => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
                   </div>
                 </div>
                 <div className="bg-white border border-slate-100 rounded-2xl sm:rounded-3xl overflow-hidden shadow-sm">

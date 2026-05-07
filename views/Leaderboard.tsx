@@ -185,8 +185,20 @@ export default function Leaderboard({ personnelList, storesList, matrixData, gen
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filteredList.map((person: any, i: number) => (
-                  <tr key={person.id} className="hover:bg-slate-50/80 transition-colors group">
+              {filteredList.map((person: any, i: number) => {
+  // Determine row colors: Top 3 get Green, Bottom 3 get Red.
+  // (We check length >= 6 so we don't accidentally color the same row red and green in tiny lists)
+  const isTopThree = i < 3;
+  const isBottomThree = filteredList.length >= 6 && i >= filteredList.length - 3;
+  
+  const rowColorClass = isTopThree 
+    ? 'bg-green-50/60 hover:bg-green-100/80' 
+    : isBottomThree 
+      ? 'bg-red-50/60 hover:bg-red-100/80' 
+      : 'hover:bg-slate-50/80';
+
+  return (
+    <tr key={person.id} className={`transition-all duration-300 group ${rowColorClass}`}>
                     <td className="p-4 sm:p-6">
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${i === 0 ? 'bg-amber-100 text-amber-600' : i === 1 ? 'bg-slate-200 text-slate-600' : i === 2 ? 'bg-orange-100 text-orange-600' : 'bg-slate-50 text-slate-400'}`}>
                         {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
@@ -222,7 +234,8 @@ export default function Leaderboard({ personnelList, storesList, matrixData, gen
                       <button onClick={() => setSelectedPerson(person)} className="px-3 sm:px-4 py-2 bg-white border-2 border-slate-100 text-slate-600 font-bold text-xs rounded-xl hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all">Details</button>
                     </td>
                   </tr>
-                ))}
+                ); // <--- Add this closing parenthesis and semicolon for the return!
+              })}
               </tbody>
             </table>
           </div>

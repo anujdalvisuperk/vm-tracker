@@ -184,58 +184,58 @@ export default function Leaderboard({ personnelList, storesList, matrixData, gen
                   <th className="p-4 sm:p-6 font-bold text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
-              {filteredList.map((person: any, i: number) => {
-  // Determine row colors: Top 3 get Green, Bottom 3 get Red.
-  // (We check length >= 6 so we don't accidentally color the same row red and green in tiny lists)
-  const isTopThree = i < 3;
-  const isBottomThree = filteredList.length >= 6 && i >= filteredList.length - 3;
-  
-  const rowColorClass = isTopThree 
-    ? 'bg-green-50/60 hover:bg-green-100/80' 
-    : isBottomThree 
-      ? 'bg-red-50/60 hover:bg-red-100/80' 
-      : 'hover:bg-slate-50/80';
+              <tbody className="divide-y divide-slate-50 text-slate-800">
+                {filteredList.map((person: any, i: number) => {
+                  // 1. Top 3 are always Green
+                  const isTopThree = i < 3;
+                  // 2. Bottom 3 are Red (as long as they aren't ALSO in the top 3!)
+                  const isBottomThree = !isTopThree && i >= filteredList.length - 3;
+                  
+                  const rowColorClass = isTopThree 
+                    ? 'bg-green-50/80 hover:bg-green-100 transition-colors' 
+                    : isBottomThree 
+                      ? 'bg-red-50/80 hover:bg-red-100 transition-colors' 
+                      : 'hover:bg-slate-50/80 transition-colors';
 
-  return (
-    <tr key={person.id} className={`transition-all duration-300 group ${rowColorClass}`}>
-                    <td className="p-4 sm:p-6">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${i === 0 ? 'bg-amber-100 text-amber-600' : i === 1 ? 'bg-slate-200 text-slate-600' : i === 2 ? 'bg-orange-100 text-orange-600' : 'bg-slate-50 text-slate-400'}`}>
-                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
-                      </div>
-                    </td>
-                    <td className="p-4 sm:p-6 font-black text-slate-900 text-base sm:text-lg">{person.name}</td>
-                    <td className="p-4 sm:p-6"><span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold uppercase tracking-wider">{person.role}</span></td>
-                    <td className="p-4 sm:p-6 font-bold text-slate-500 text-center">{person.stats.totalStores}</td>
-                    
-                    <td className="p-4 sm:p-6 pr-8">
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex justify-between items-center text-[10px] font-bold text-slate-400">
-                           <span>SUB</span><span className="text-blue-600">{person.stats.submissionRate}%</span>
+                  return (
+                    <tr key={person.id} className={`group ${rowColorClass}`}>
+                      <td className="p-4 sm:p-6">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${i === 0 ? 'bg-amber-100 text-amber-600' : i === 1 ? 'bg-slate-200 text-slate-600' : i === 2 ? 'bg-orange-100 text-orange-600' : 'bg-slate-50 text-slate-400'}`}>
+                          {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                         </div>
-                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                           <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: `${person.stats.submissionRate}%` }} />
+                      </td>
+                      <td className="p-4 sm:p-6 font-black text-slate-900 text-base sm:text-lg">{person.name}</td>
+                      <td className="p-4 sm:p-6"><span className="bg-white border border-slate-200 text-slate-500 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold uppercase tracking-wider">{person.role}</span></td>
+                      <td className="p-4 sm:p-6 font-bold text-slate-500 text-center">{person.stats.totalStores}</td>
+                      
+                      <td className="p-4 sm:p-6 pr-8">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex justify-between items-center text-[10px] font-bold text-slate-400">
+                             <span>SUB</span><span className="text-blue-600">{person.stats.submissionRate}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                             <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: `${person.stats.submissionRate}%` }} />
+                          </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="p-4 sm:p-6 pr-8">
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex justify-between items-center text-[10px] font-bold text-slate-400">
-                           <span>APP</span><span className="text-green-600">{person.stats.approvalRate}%</span>
+                      <td className="p-4 sm:p-6 pr-8">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex justify-between items-center text-[10px] font-bold text-slate-400">
+                             <span>APP</span><span className="text-green-600">{person.stats.approvalRate}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                             <div className="h-full bg-green-500 rounded-full transition-all duration-1000" style={{ width: `${person.stats.approvalRate}%` }} />
+                          </div>
                         </div>
-                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                           <div className="h-full bg-green-500 rounded-full transition-all duration-1000" style={{ width: `${person.stats.approvalRate}%` }} />
-                        </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="p-4 sm:p-6 text-right">
-                      <button onClick={() => setSelectedPerson(person)} className="px-3 sm:px-4 py-2 bg-white border-2 border-slate-100 text-slate-600 font-bold text-xs rounded-xl hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all">Details</button>
-                    </td>
-                  </tr>
-                ); // <--- Add this closing parenthesis and semicolon for the return!
-              })}
+                      <td className="p-4 sm:p-6 text-right">
+                        <button onClick={() => setSelectedPerson(person)} className="px-3 sm:px-4 py-2 bg-white border-2 border-slate-100 text-slate-600 font-bold text-xs rounded-xl hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all shadow-sm">Details</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

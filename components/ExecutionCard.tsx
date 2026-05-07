@@ -95,7 +95,18 @@ export default function ExecutionCard({ execution, onUpdate, rejectionReasons }:
         }
       }
       const { data: campaigns } = await supabase.from('campaigns').select('*').order('name');
-      if (campaigns) setAllCampaigns(campaigns);
+      if (campaigns) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        // Filter out the expired ones before saving them to state
+        const activeOnly = campaigns.filter((camp: any) => {
+          if (!camp.end_date) return true;
+          return new Date(camp.end_date) >= today;
+        });
+        
+        setAllCampaigns(activeOnly);
+      }
     };
     fetchMasterData();
   }, [execution.store_name, execution.raw_text, isPazo]);

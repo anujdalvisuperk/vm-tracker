@@ -147,6 +147,12 @@ export default function VMDashboard() {
     return generalMatrixData.filter((row: any) => activeNames.includes(row.campaign));
   }, [generalMatrixData, activeCampaignsList]);
 
+  // 🟢 NEW: Filter the detailed matrix data so the Leaderboard only scores active campaigns
+  const activeMatrixData = useMemo(() => {
+    const activeNames = activeCampaignsList.map((c: any) => c.name);
+    return matrixData.filter((row: any) => activeNames.includes(row.campaign));
+  }, [matrixData, activeCampaignsList]);
+
   // --- DERIVED DATA ---
   const missingExecutions = useMemo(() => {
     const missing: { store: string; campaign: string; payout: number }[] = [];
@@ -453,7 +459,7 @@ export default function VMDashboard() {
           <AnalyticsMatrix 
             campaignsList={activeCampaignsList} 
             generalMatrixData={activeGeneralMatrixData} 
-            matrixData={matrixData} 
+            matrixData={activeMatrixData} 
             matrixYear={matrixYear} setMatrixYear={setMatrixYear} // 👈 NEW
             matrixMonth={matrixMonth} setMatrixMonth={setMatrixMonth}
             onPhotoClick={(wData:any) => {
@@ -470,11 +476,17 @@ export default function VMDashboard() {
           <Leaderboard 
              personnelList={personnelList} 
              storesList={storesList} 
-             matrixData={matrixData} 
+             matrixData={activeMatrixData} 
              campaignsList={activeCampaignsList}
              generalMatrixData={activeGeneralMatrixData} // 👈 Pass this to get dynamic campaigns
              matrixYear={matrixYear} setMatrixYear={setMatrixYear} // 👈 NEW
              matrixMonth={matrixMonth} setMatrixMonth={setMatrixMonth}
+             onPhotoClick={(wData:any) => {
+              if (wData && wData.execution) {
+                setSelectedPhoto({ id: wData.execution.id, store: wData.execution.store_name, status: wData.execution.status, image: wData.execution.image_url, date: new Date(wData.execution.submission_date).toLocaleString(), raw_text: wData.execution.raw_text, rejection_reason: wData.execution.rejection_reason });
+                setModalActionState('idle');
+              }
+            }}
           />
         )}
 

@@ -2,7 +2,7 @@
 import { useState, useMemo, useEffect } from 'react';
 
 // 👈 NEW: Accepts global time props and generalMatrixData for dynamic dropdowns
-export default function Leaderboard({ personnelList, storesList, matrixData, generalMatrixData, matrixYear, setMatrixYear, matrixMonth, setMatrixMonth }: any) {
+export default function Leaderboard({ personnelList, storesList, matrixData, generalMatrixData, matrixYear, setMatrixYear, matrixMonth, setMatrixMonth, onPhotoClick }: any) {
   const [roleFilter, setRoleFilter] = useState<'ASM' | 'SAE' | 'Promoter'>('SAE'); 
   const [sortFilter, setSortFilter] = useState<'approval' | 'submission'>('approval');
   const [weekFilter, setWeekFilter] = useState<'All' | 'w1' | 'w2' | 'w3' | 'w4'>('All');
@@ -83,11 +83,19 @@ export default function Leaderboard({ personnelList, storesList, matrixData, gen
     });
   }, [leaderboardData, roleFilter, sortFilter]);
 
-  const renderStatus = (status: string) => {
+  const renderStatus = (wData: any) => {
+    // 🟢 Read the whole object instead of just the string
+    const status = wData?.status;
+    const hasPhoto = !!wData?.execution;
+
     if (!status || status === 'Missed') return <span className="text-slate-400 font-bold">Missed</span>;
-    if (status === 'Approved') return <span className="text-green-600 font-black">Approved</span>;
-    if (status === 'Rejected') return <span className="text-red-600 font-black">Rejected</span>;
-    return <span className="text-amber-500 font-bold">Pending</span>;
+    
+    // Add visual cues so users know they can click it
+    const clickableClass = hasPhoto ? "cursor-pointer hover:opacity-75 hover:scale-105 transition-all inline-block underline decoration-dotted underline-offset-4" : "";
+
+    if (status === 'Approved') return <span onClick={() => hasPhoto && onPhotoClick(wData)} className={`text-green-600 font-black ${clickableClass}`}>Approved</span>;
+    if (status === 'Rejected') return <span onClick={() => hasPhoto && onPhotoClick(wData)} className={`text-red-600 font-black ${clickableClass}`}>Rejected</span>;
+    return <span onClick={() => hasPhoto && onPhotoClick(wData)} className={`text-amber-500 font-bold ${clickableClass}`}>Pending</span>;
   };
 
   return (
@@ -277,13 +285,14 @@ export default function Leaderboard({ personnelList, storesList, matrixData, gen
                              <td className="p-3 sm:p-4 font-bold text-slate-500">{row.campaign}</td>
                              {weekFilter === 'All' ? (
                                <>
-                                 <td className="p-3 sm:p-4 text-center">{renderStatus(row.w1?.status)}</td>
-                                 <td className="p-3 sm:p-4 text-center">{renderStatus(row.w2?.status)}</td>
-                                 <td className="p-3 sm:p-4 text-center">{renderStatus(row.w3?.status)}</td>
-                                 <td className="p-3 sm:p-4 text-center">{renderStatus(row.w4?.status)}</td>
+                                 {/* 🟢 Removed the '.status' part so it passes the whole object! */}
+                                 <td className="p-3 sm:p-4 text-center">{renderStatus(row.w1)}</td>
+                                 <td className="p-3 sm:p-4 text-center">{renderStatus(row.w2)}</td>
+                                 <td className="p-3 sm:p-4 text-center">{renderStatus(row.w3)}</td>
+                                 <td className="p-3 sm:p-4 text-center">{renderStatus(row.w4)}</td>
                                </>
                              ) : (
-                               <td className="p-3 sm:p-4 text-center">{renderStatus(row[weekFilter]?.status)}</td>
+                               <td className="p-3 sm:p-4 text-center">{renderStatus(row[weekFilter])}</td>
                              )}
                            </tr>
                          ))}

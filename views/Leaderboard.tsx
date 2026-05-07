@@ -192,11 +192,10 @@ export default function Leaderboard({ personnelList, storesList, matrixData, gen
                   const isBottomThree = !isTopThree && i >= filteredList.length - 3;
                   
                   const rowColorClass = isTopThree 
-                    ? 'bg-green-50/80 hover:bg-green-100 transition-colors' 
+                    ? 'bg-green-100 hover:bg-green-200 transition-colors' 
                     : isBottomThree 
-                      ? 'bg-red-50/80 hover:bg-red-100 transition-colors' 
-                      : 'hover:bg-slate-50/80 transition-colors';
-
+                      ? 'bg-red-100 hover:bg-red-200 transition-colors' 
+                      : 'bg-white hover:bg-slate-50 transition-colors';
                   return (
                     <tr key={person.id} className={`group ${rowColorClass}`}>
                       <td className="p-4 sm:p-6">

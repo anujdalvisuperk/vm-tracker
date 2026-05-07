@@ -61,7 +61,7 @@ const OrphanCard = ({ execution, storesList, campaignsList, onResolve, onDelete 
                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2">Assign Campaign</label>
                <select value={selectedCamp} onChange={(e) => setSelectedCamp(e.target.value)} className="w-full border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-blue-400 focus:ring-4 focus:ring-blue-50 outline-none transition-all bg-white">
                  <option value="" disabled>-- Select --</option>
-                 {activeCampaignsList.map((c: any) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                 {campaignsList.map((c: any) => <option key={c.id} value={c.name}>{c.name}</option>)}
                </select>
              </div>
           </div>

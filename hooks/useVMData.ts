@@ -76,10 +76,17 @@ export function useVMData() {
   }, [allExecutions, storesList, campaignsList]);
 
   // --- ENGINE: HISTORICAL SNAPSHOT CALCULATOR ---
+  // --- ENGINE: HISTORICAL SNAPSHOT CALCULATOR ---
   const timeFilteredExecutions = useMemo(() => {
     return allExecutions.filter(e => {
       if (!e.submission_date) return false;
-      const d = new Date(e.submission_date);
+      // 🟢 FIX: Replace Supabase space with 'T' so all browsers parse it perfectly
+      const safeDateStr = e.submission_date.replace(' ', 'T');
+      const d = new Date(safeDateStr);
+      
+      // Safety check in case it's completely corrupted
+      if (isNaN(d.getTime())) return false; 
+      
       return d.getFullYear().toString() === matrixYear && (d.getMonth() + 1).toString() === matrixMonth;
     });
   }, [allExecutions, matrixMonth, matrixYear]);
@@ -114,24 +121,23 @@ export function useVMData() {
     // 3. Generate the immutable matrix
     // 3. Generate the immutable matrix
     const getWeekStatusForCamp = (storeName: string, campName: string, weekNum: number) => {
-      // 1. Indestructible Matching: Ignore all uppercase/lowercase and extra spaces
       const targetStore = storeName.trim().toLowerCase();
       const targetCamp = campName.trim().toLowerCase();
 
       const storeExecs = timeFilteredExecutions.filter(e => {
         const sNameMatch = (e.store_name?.trim().toLowerCase() === targetStore) || 
                            (e.extracted_store?.trim().toLowerCase() === targetStore);
-        
         if (!sNameMatch || !e.campaign_name) return false;
         
-        // Split multi-tags like "Lotus, Surf Excel" and make them all lowercase
         const taggedCamps = e.campaign_name.split(',').map((s:string) => s.trim().toLowerCase());
         return taggedCamps.includes(targetCamp);
       });
       
-      // 2. Filter by exact Calendar Days
       const weekExecs = storeExecs.filter(e => {
-        const day = new Date(e.submission_date).getDate();
+        // 🟢 FIX: Safe Date Parsing for the Week buckets
+        const safeDateStr = e.submission_date.replace(' ', 'T');
+        const day = new Date(safeDateStr).getDate();
+        
         if (weekNum === 1 && day >= 1 && day <= 7) return true;
         if (weekNum === 2 && day >= 8 && day <= 14) return true;
         if (weekNum === 3 && day >= 15 && day <= 21) return true;
@@ -141,11 +147,14 @@ export function useVMData() {
       
       if (weekExecs.length === 0) return { status: 'Missed', execution: null };
       
-      // 3. STATUS PRIORITY: Best status wins for the week!
-      const approvedExec = weekExecs.find(e => e.status?.toLowerCase() === 'approved');
+      // 🟢 FIX: Priority Status with safe trailing space stripping
+      const approvedExec = weekExecs.find(e => e.status?.trim().toLowerCase() === 'approved');
       if (approvedExec) return { status: 'Approved', execution: approvedExec };
 
-      const pendingExec = weekExecs.find(e => e.status?.toLowerCase() === 'pending_admin' || e.status?.toLowerCase() === 'pending');
+      const pendingExec = weekExecs.find(e => {
+        const stat = e.status?.trim().toLowerCase();
+        return stat === 'pending_admin' || stat === 'pending';
+      });
       if (pendingExec) return { status: 'Pending', execution: pendingExec };
 
       return { status: 'Rejected', execution: weekExecs[0] };

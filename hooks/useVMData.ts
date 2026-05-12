@@ -115,9 +115,11 @@ export function useVMData() {
     const getWeekStatusForCamp = (storeName: string, campName: string, weekNum: number) => {
       const storeExecs = timeFilteredExecutions.filter(e => 
         (e.store_name === storeName || e.extracted_store === storeName) && 
-        (e.campaign_name && e.campaign_name.includes(campName))
+        (e.campaign_name && e.campaign_name.split(',').map((s:string) => s.trim()).includes(campName))
       );
-      const execForWeek = storeExecs.find(e => {
+      
+      // 2. Get ALL executions that happened within this specific week
+      const weekExecs = storeExecs.filter(e => {
         const day = new Date(e.submission_date).getDate();
         if (weekNum === 1 && day >= 1 && day <= 7) return true;
         if (weekNum === 2 && day >= 8 && day <= 14) return true;
@@ -126,12 +128,17 @@ export function useVMData() {
         return false;
       });
       
-      if (!execForWeek) return { status: 'Missed', execution: null };
+      if (weekExecs.length === 0) return { status: 'Missed', execution: null };
       
-      let statusStr = 'Pending';
-      if (execForWeek.status === 'approved' || execForWeek.status === 'Approved') statusStr = 'Approved';
-      if (execForWeek.status === 'rejected' || execForWeek.status === 'Rejected') statusStr = 'Rejected';
-      return { status: statusStr, execution: execForWeek };
+      // 3. STATUS PRIORITY CHECK: Best status wins for the week!
+      const approvedExec = weekExecs.find(e => e.status?.toLowerCase() === 'approved');
+      if (approvedExec) return { status: 'Approved', execution: approvedExec };
+
+      const pendingExec = weekExecs.find(e => e.status?.toLowerCase() === 'pending_admin' || e.status?.toLowerCase() === 'pending');
+      if (pendingExec) return { status: 'Pending', execution: pendingExec };
+
+      // If it's not Approved or Pending, it must be Rejected. Take the newest one.
+      return { status: 'Rejected', execution: weekExecs[0] };
     };
 
     campaignStoreMap.forEach((storeSet, campName) => {

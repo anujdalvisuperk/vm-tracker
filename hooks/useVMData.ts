@@ -28,12 +28,35 @@ export function useVMData() {
   const fetchData = async () => {
     setIsLoading(true);
     
-    const { data: qData } = await supabase.from('executions').select('*').eq('status', 'pending_admin').order('submission_date', { ascending: false }).limit(10000);
+    // 1. Get Pending Executions
+    const { data: qData } = await supabase.from('executions').select('*').eq('status', 'pending_admin').order('submission_date', { ascending: false }).limit(1000);
     if (qData) setPendingExecutions(qData);
 
-    const { data: hData } = await supabase.from('executions').select('*').order('submission_date', { ascending: false }).limit(50000);
-    if (hData) setAllExecutions(hData);
+    // 2. 🟢 PAGINATION LOOP: Bypass the 1000 limit to get ALL historical data safely
+    let allFetchedExecs: any[] = [];
+    let hasMore = true;
+    let startRow = 0;
+    const step = 1000; // Pull in chunks of 1000
 
+    while (hasMore) {
+      const { data: batchData } = await supabase
+        .from('executions')
+        .select('*')
+        .order('submission_date', { ascending: false })
+        .range(startRow, startRow + step - 1);
+
+      if (batchData && batchData.length > 0) {
+        allFetchedExecs = [...allFetchedExecs, ...batchData];
+        startRow += step;
+        // If we got exactly 1000, there might be more. If we got less, we've reached the end!
+        if (batchData.length < step) hasMore = false; 
+      } else {
+        hasMore = false; // No data returned, stop looping
+      }
+    }
+    setAllExecutions(allFetchedExecs);
+
+    // 3. Get Master Data
     const { data: sData } = await supabase.from('stores').select('*').order('name').limit(5000);
     if (sData) setStoresList(sData);
 

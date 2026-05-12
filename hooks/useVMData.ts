@@ -112,13 +112,24 @@ export function useVMData() {
     }
 
     // 3. Generate the immutable matrix
+    // 3. Generate the immutable matrix
     const getWeekStatusForCamp = (storeName: string, campName: string, weekNum: number) => {
-      const storeExecs = timeFilteredExecutions.filter(e => 
-        (e.store_name === storeName || e.extracted_store === storeName) && 
-        (e.campaign_name && e.campaign_name.split(',').map((s:string) => s.trim()).includes(campName))
-      );
+      // 1. Indestructible Matching: Ignore all uppercase/lowercase and extra spaces
+      const targetStore = storeName.trim().toLowerCase();
+      const targetCamp = campName.trim().toLowerCase();
+
+      const storeExecs = timeFilteredExecutions.filter(e => {
+        const sNameMatch = (e.store_name?.trim().toLowerCase() === targetStore) || 
+                           (e.extracted_store?.trim().toLowerCase() === targetStore);
+        
+        if (!sNameMatch || !e.campaign_name) return false;
+        
+        // Split multi-tags like "Lotus, Surf Excel" and make them all lowercase
+        const taggedCamps = e.campaign_name.split(',').map((s:string) => s.trim().toLowerCase());
+        return taggedCamps.includes(targetCamp);
+      });
       
-      // 2. Get ALL executions that happened within this specific week
+      // 2. Filter by exact Calendar Days
       const weekExecs = storeExecs.filter(e => {
         const day = new Date(e.submission_date).getDate();
         if (weekNum === 1 && day >= 1 && day <= 7) return true;
@@ -130,14 +141,13 @@ export function useVMData() {
       
       if (weekExecs.length === 0) return { status: 'Missed', execution: null };
       
-      // 3. STATUS PRIORITY CHECK: Best status wins for the week!
+      // 3. STATUS PRIORITY: Best status wins for the week!
       const approvedExec = weekExecs.find(e => e.status?.toLowerCase() === 'approved');
       if (approvedExec) return { status: 'Approved', execution: approvedExec };
 
       const pendingExec = weekExecs.find(e => e.status?.toLowerCase() === 'pending_admin' || e.status?.toLowerCase() === 'pending');
       if (pendingExec) return { status: 'Pending', execution: pendingExec };
 
-      // If it's not Approved or Pending, it must be Rejected. Take the newest one.
       return { status: 'Rejected', execution: weekExecs[0] };
     };
 

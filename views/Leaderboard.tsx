@@ -40,11 +40,16 @@ export default function Leaderboard({ personnelList, storesList, matrixData, gen
     if (!personnelList || !storesList || !matrixData) return [];
 
     const calculateScore = (pId: string, roleType: 'asm' | 'staff') => {
-      const assignedStores = storesList.filter((s: any) => roleType === 'asm' ? s.asm_id === pId : s.field_staff_id === pId).map((s: any) => s.name);
+      const assignedStores = storesList
+        .filter((s: any) => roleType === 'asm' ? s.asm_id === pId : s.field_staff_id === pId)
+        .map((s: any) => s.name?.trim().toLowerCase());
       if (assignedStores.length === 0) return null;
 
-      const rows = matrixData.filter((r: any) => assignedStores.includes(r.store) && (selectedCampaigns.includes('All') || selectedCampaigns.includes(r.campaign)));
-      
+      const rows = matrixData.filter((r: any) => {
+        const isStoreMatch = assignedStores.includes(r.store?.trim().toLowerCase());
+        const isCampMatch = selectedCampaigns.includes('All') || selectedCampaigns.includes(r.campaign);
+        return isStoreMatch && isCampMatch;
+      });
       let expected = 0; let submitted = 0; let approved = 0; let rejected = 0;
       if (rows.length === 0) return { submissionRate: 0, approvalRate: 0, totalStores: assignedStores.length, details: { expected, submitted, approved, rejected, missed: 0, rows: [] } };
 

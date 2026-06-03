@@ -11,7 +11,15 @@ export default function Leaderboard({ personnelList, storesList, matrixData, gen
   const [isCampMenuOpen, setIsCampMenuOpen] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState<any | null>(null);
 
-  const years = [2024, 2025, 2026, 2027];
+  // 🟢 NEW: Keeps the Drill-Down modal perfectly synced with live background approvals
+  useEffect(() => {
+    if (selectedPerson) {
+       const liveUpdate = filteredList.find((p: any) => p.id === selectedPerson.id);
+       if (liveUpdate) setSelectedPerson(liveUpdate);
+    }
+  }, [filteredList]); // Listens for any matrix updates
+
+  const years = [2026, 2027, 2028, 2029];
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
   useEffect(() => {

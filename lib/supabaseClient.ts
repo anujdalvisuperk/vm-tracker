@@ -8,7 +8,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn("Supabase credentials are missing. Check your Vercel Environment Variables.");
 }
 
-export const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co', 
-  supabaseAnonKey || 'placeholder'
-);
+//export const supabase = createClient(
+  //supabaseUrl || 'https://placeholder.supabase.co', 
+  //supabaseAnonKey || 'placeholder'
+//);

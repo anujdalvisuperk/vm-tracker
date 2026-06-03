@@ -39,7 +39,13 @@ const OrphanCard = ({ execution, storesList, campaignsList, onResolve, onDelete 
     <div className="bg-white/80 backdrop-blur-md border border-amber-200 rounded-2xl overflow-visible shadow-lg flex mb-6 transition-all hover:shadow-xl flex-col sm:flex-row">
       <div className="w-full sm:w-[300px] h-48 sm:h-auto bg-slate-100 flex-shrink-0 relative group sm:rounded-l-2xl sm:rounded-tr-none rounded-t-2xl overflow-hidden border-b sm:border-b-0 sm:border-r border-slate-100">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={execution.image_url} alt="Execution" className="w-full h-full object-cover cursor-zoom-in hover:scale-105 transition-transform duration-500" onClick={() => window.open(execution.image_url, '_blank')} />
+        <img 
+          src={execution.image_url ? encodeURI(execution.image_url.trim()) : ''} 
+          alt="Execution" 
+          className="w-full h-full object-cover cursor-zoom-in hover:scale-105 transition-transform duration-500" 
+          onClick={() => window.open(execution.image_url, '_blank')} 
+          onError={(e) => console.error("Image failed to load:", execution.image_url)}
+        />
         <div className="absolute top-3 left-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-md uppercase tracking-widest">Orphaned</div>
       </div>
       <div className="flex-1 p-6 flex flex-col justify-between">
@@ -664,7 +670,12 @@ export default function VMDashboard() {
             
             <div className="flex-1 bg-slate-100 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden group min-h-[300px]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={selectedPhoto.image} alt="Execution" className="max-h-full max-w-full object-contain rounded-xl shadow-sm cursor-zoom-in transition-transform duration-500 hover:scale-105" onClick={() => window.open(selectedPhoto.image, '_blank')} />
+<img 
+  src={selectedPhoto.image ? encodeURI(selectedPhoto.image.trim()) : ''} 
+  alt="Execution" 
+  className="max-h-full max-w-full object-contain rounded-xl shadow-sm cursor-zoom-in transition-transform duration-500 hover:scale-105" 
+  onClick={() => window.open(selectedPhoto.image, '_blank')} 
+/>
             </div>
 
             <div className="p-6 sm:p-8 bg-white flex flex-col w-full md:w-96 overflow-y-auto">
